@@ -14,8 +14,8 @@
  *  decompression knows exactly how to reverse it.
  */
 
-import { compress, compress7, encrypt, encryptMetadata } from './codec';
-import { macro } from './macro';
+import { compress, compress7Async, encryptWithKey, encryptMetadataWithKey, deriveKeyAsync } from './codec';
+import { macroWithKeys } from './macro';
 import { checksum } from './integrity';
 import {
   CRAFT_MAGIC,
@@ -39,13 +39,13 @@ import {
  * @param options — Optional compression/encryption settings
  * @returns NanoResult with the .craft buffer and operation stats
  */
-export function nano(
+export async function nano(
   data: Buffer,
   originalName: string,
   originalMime: string,
   passphrase: string,
   options?: NanoOptions,
-): NanoResult {
+): Promise<NanoResult> {
   // Input validation
   if (!Buffer.isBuffer(data) || data.length === 0) {
     throw new Error('Cannot craft empty data. Provide non-empty input to Craft Nano.');
@@ -67,7 +67,9 @@ export function nano(
   let strategyBenchmarks: Array<{ strategy: number; name: string; size: number }> | undefined;
 
   if (mode === '7fold') {
-    const result = compress7(data);
+    // Async engine: the Brotli/Zstd strategy passes run on the libuv
+    // threadpool, so compressing a large file no longer blocks the event loop.
+    const result = await compress7Async(data);
     compressed = result.data;
     compressionStrategyName = result.strategyName;
     strategyBenchmarks = result.allResults;
@@ -75,8 +77,14 @@ export function nano(
     compressed = compress(data);
   }
 
-  // Fold 3: AES-256-GCM encrypt the compressed data
-  const { encrypted, iv, authTag, salt } = encrypt(compressed, passphrase);
+  // Fold 3: AES-256-GCM encrypt the compressed data.
+  // Derive each key ONCE and reuse it for the self-verification below
+  // (macroWithKeys) instead of macro() re-deriving from the package salts.
+  // The package stores the salts, so macro() reproduces the exact same keys
+  // from the passphrase — the format and security parameters are unchanged;
+  // only the redundant re-derivations are removed (4 → 2 for nano()).
+  const { key: dataKey, salt } = await deriveKeyAsync(passphrase);
+  const { encrypted, iv, authTag } = encryptWithKey(compressed, dataKey, salt);
 
   // Determine if metadata should be encrypted (default: true)
   const shouldEncryptMetadata = options?.encryptMetadata !== false;
@@ -99,6 +107,15 @@ export function nano(
   // Serialize metadata
   const metadataJson = Buffer.from(JSON.stringify(metadata), 'utf-8');
 
+  // Derive the metadata key only when metadata will actually be encrypted
+  let metaKey: Buffer | undefined;
+  let metaSalt: Buffer | undefined;
+  if (shouldEncryptMetadata) {
+    const metaKeyResult = await deriveKeyAsync(passphrase);
+    metaKey = metaKeyResult.key;
+    metaSalt = metaKeyResult.salt;
+  }
+
   // Assemble the .craft package
   let buffer: Buffer;
 
@@ -106,7 +123,7 @@ export function nano(
     // Encrypted metadata format:
     // MAGIC(6) + VER(1) + ML(4) + META_SALT(16) + META_IV(12) + META_AUTHTAG(16) + ENCRYPTED_META(variable) + DATA_SALT(16) + DATA_IV(12) + DATA_AUTHTAG(16) + ENCRYPTED_DATA(variable)
     // ML = total length of encrypted metadata section (crypto prefix + encrypted blob)
-    const metaResult = encryptMetadata(metadataJson, passphrase);
+    const metaResult = encryptMetadataWithKey(metadataJson, metaKey as Buffer, metaSalt as Buffer);
     const metaSectionLength = SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH + metaResult.encrypted.length;
     const metadataLength = Buffer.alloc(4);
     // Bit 31 explicitly marks this section as encrypted metadata (v3+) — see types.ts.
@@ -157,7 +174,7 @@ export function nano(
     let restoredOk = false;
     let verifyError: string | undefined;
     try {
-      const restored = macro(buffer, passphrase);
+      const restored = await macroWithKeys(buffer, { metaKey, dataKey });
       restoredOk = restored.integrityVerified && restored.buffer.equals(data);
     } catch (err) {
       verifyError = err instanceof Error ? err.message : String(err);

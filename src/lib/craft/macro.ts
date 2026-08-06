@@ -17,7 +17,7 @@
  *  precedes the encrypted metadata blob.
  */
 
-import { decrypt, decompress, decompress7, decryptMetadata } from './codec';
+import { decryptWithKey, decompress, decompress7Async, decryptMetadataWithKey, deriveKeyAsync } from './codec';
 import { verify } from './integrity';
 import {
   CRAFT_MAGIC,
@@ -87,19 +87,35 @@ function resolveMetadataEncryption(
 }
 
 /**
- * Parse and validate the header of a .craft package.
- * Supports v1 and v2 formats, with encrypted or plaintext metadata.
+ * A .craft package parsed into its sections WITHOUT any decryption.
  *
- * @internal
+ * Splitting parsing from decryption is what lets nano() self-verify with keys
+ * it already derived (macroWithKeys) instead of re-running PBKDF2 on the
+ * package salts — see macro() and macroWithKeys below.
  */
-function parsePackage(craftBuffer: Buffer, passphrase: string): {
+interface ParsedPackage {
   version: number;
-  metadata: CraftMetadata;
+  metadataEncrypted: boolean;
+  /** Parsed plaintext metadata (only present when metadataEncrypted is false) */
+  metadata?: CraftMetadata;
+  metaSalt?: Buffer;
+  metaIv?: Buffer;
+  metaAuthTag?: Buffer;
+  encryptedMeta?: Buffer;
   salt: Buffer;
   iv: Buffer;
   authTag: Buffer;
   encrypted: Buffer;
-} {
+}
+
+/**
+ * Parse and validate the header of a .craft package.
+ * Supports v1, v2 and v3 formats, with encrypted or plaintext metadata.
+ * Does NOT decrypt anything — the caller derives keys and decrypts.
+ *
+ * @internal
+ */
+function parsePackage(craftBuffer: Buffer): ParsedPackage {
   let offset = 0;
 
   // Validate magic bytes
@@ -142,7 +158,12 @@ function parsePackage(craftBuffer: Buffer, passphrase: string): {
     );
   }
 
-  let metadata: CraftMetadata;
+  let metadataEncrypted: boolean;
+  let metadata: CraftMetadata | undefined;
+  let metaSalt: Buffer | undefined;
+  let metaIv: Buffer | undefined;
+  let metaAuthTag: Buffer | undefined;
+  let encryptedMeta: Buffer | undefined;
 
   if (isPlaintext) {
     // Plaintext metadata format
@@ -164,6 +185,7 @@ function parsePackage(craftBuffer: Buffer, passphrase: string): {
       );
     }
     offset += metadataLength;
+    metadataEncrypted = false;
 
     // Validate remaining buffer has enough for crypto params + data
     if (offset + CRYPTO_OVERHEAD > craftBuffer.length) {
@@ -176,6 +198,7 @@ function parsePackage(craftBuffer: Buffer, passphrase: string): {
     // Encrypted metadata format:
     // META_SALT(16) + META_IV(12) + META_AUTHTAG(16) + ENCRYPTED_META(variable)
     // The metadataLength includes the crypto prefix (44 bytes) + encrypted blob
+    metadataEncrypted = true;
 
     // Validate we have at least the crypto prefix
     if (offset + CRYPTO_OVERHEAD > craftBuffer.length) {
@@ -185,13 +208,13 @@ function parsePackage(craftBuffer: Buffer, passphrase: string): {
       );
     }
 
-    const metaSalt = craftBuffer.subarray(offset, offset + SALT_LENGTH);
+    metaSalt = craftBuffer.subarray(offset, offset + SALT_LENGTH);
     offset += SALT_LENGTH;
 
-    const metaIv = craftBuffer.subarray(offset, offset + IV_LENGTH);
+    metaIv = craftBuffer.subarray(offset, offset + IV_LENGTH);
     offset += IV_LENGTH;
 
-    const metaAuthTag = craftBuffer.subarray(offset, offset + AUTH_TAG_LENGTH);
+    metaAuthTag = craftBuffer.subarray(offset, offset + AUTH_TAG_LENGTH);
     offset += AUTH_TAG_LENGTH;
 
     // The remaining metadata bytes are the encrypted blob
@@ -209,25 +232,8 @@ function parsePackage(craftBuffer: Buffer, passphrase: string): {
       );
     }
 
-    const encryptedMeta = craftBuffer.subarray(offset, offset + encryptedMetaLength);
+    encryptedMeta = craftBuffer.subarray(offset, offset + encryptedMetaLength);
     offset += encryptedMetaLength;
-
-    // Decrypt metadata
-    try {
-      const decryptedMetaJson = decryptMetadata(encryptedMeta, passphrase, metaSalt, metaIv, metaAuthTag);
-      metadata = JSON.parse(decryptedMetaJson.toString('utf-8'));
-      metadata.metadataEncrypted = true;
-    } catch (err: unknown) {
-      if (err instanceof Error && (err.message.includes('auth tag') || err.message.includes('Unsupported state') || err.message.includes('EVP_DecryptFinal'))) {
-        throw new Error(
-          'Metadata decryption failed — the passphrase is incorrect.'
-        );
-      }
-      throw new Error(
-        'Invalid CRAFT package: failed to decrypt or parse metadata. ' +
-        'The file may be corrupted or the passphrase is incorrect.'
-      );
-    }
 
     // Validate remaining buffer has enough for data crypto params + data
     if (offset + CRYPTO_OVERHEAD > craftBuffer.length) {
@@ -259,60 +265,77 @@ function parsePackage(craftBuffer: Buffer, passphrase: string): {
     );
   }
 
-  return { version, metadata, salt, iv, authTag, encrypted };
+  return {
+    version,
+    metadataEncrypted,
+    metadata,
+    metaSalt,
+    metaIv,
+    metaAuthTag,
+    encryptedMeta,
+    salt,
+    iv,
+    authTag,
+    encrypted,
+  };
 }
 
 /**
- * Execute the Macro pipeline: decrypt then decompress.
- *
- * Automatically detects package version and applies the correct
- * decompression strategy (v1 = Brotli, v2 = 7-fold adaptive).
- * Also automatically detects encrypted vs plaintext metadata.
- *
- * @param craftBuffer — The .craft package buffer
- * @param passphrase — Decryption passphrase
- * @returns MacroResult with the restored data and verification status
+ * Decrypt the encrypted-metadata section of a parsed package with an
+ * already-derived key. Maps GCM auth-tag failures to a passphrase error.
  */
-export function macro(
-  craftBuffer: Buffer,
-  passphrase: string,
-): MacroResult {
-  // Input validation
+function decryptMetadataSection(pkg: ParsedPackage, metaKey: Buffer): CraftMetadata {
+  try {
+    const decryptedMetaJson = decryptMetadataWithKey(
+      pkg.encryptedMeta as Buffer,
+      metaKey,
+      pkg.metaIv as Buffer,
+      pkg.metaAuthTag as Buffer,
+    );
+    const parsed = JSON.parse(decryptedMetaJson.toString('utf-8')) as CraftMetadata;
+    parsed.metadataEncrypted = true;
+    return parsed;
+  } catch (err: unknown) {
+    if (err instanceof Error && (err.message.includes('auth tag') || err.message.includes('Unsupported state') || err.message.includes('EVP_DecryptFinal'))) {
+      throw new Error(
+        'Metadata decryption failed — the passphrase is incorrect.'
+      );
+    }
+    throw new Error(
+      'Invalid CRAFT package: failed to decrypt or parse metadata. ' +
+      'The file may be corrupted or the passphrase is incorrect.'
+    );
+  }
+}
+
+/** Validate that a buffer could plausibly be a .craft package. */
+function assertValidCraftPackage(craftBuffer: Buffer): void {
   if (!Buffer.isBuffer(craftBuffer) || craftBuffer.length < 20) {
     throw new Error(
       'Invalid CRAFT package: too small to be a valid .craft file. ' +
       'Minimum package size is 20 bytes (magic + version + metadata + crypto params).'
     );
   }
-  if (!passphrase || passphrase.length === 0) {
-    throw new Error('Passphrase is required for Macro extraction.');
-  }
-  if (passphrase.length < 12) {
-    throw new Error('Passphrase must be at least 12 characters for secure decryption.');
-  }
+}
 
-  // Step 1: Parse the .craft package (includes metadata decryption if needed)
-  const { version, metadata, salt, iv, authTag, encrypted } = parsePackage(craftBuffer, passphrase);
-
-  // Step 2: Decrypt the compressed data
-  const compressed = decrypt(encrypted, passphrase, iv, authTag, salt);
-
-  // Step 3: Decompress based on compression mode from metadata
+/**
+ * Finish the Macro pipeline with the payload already decrypted:
+ * decompress (7-fold vs Brotli) then verify the SHA-256 checksum.
+ * Shared by macro() and macroWithKeys().
+ */
+async function finishMacro(metadata: CraftMetadata, compressed: Buffer): Promise<MacroResult> {
   // The compressionMode in metadata tells us exactly how to decompress:
   //   'brotli' = raw Brotli (no strategy byte prefix)
   //   '7fold'  = 7-fold adaptive (strategy byte prefix)
-  // This is more reliable than using version alone, since v2 packages
-  // can use either mode.
+  // The 7-fold path uses decompress7Async so the decode runs on the libuv
+  // threadpool (bounded blocking: it never stalls the event loop).
   let restored: Buffer;
   if (metadata.compressionMode === '7fold') {
-    // 7-fold adaptive compression (strategy byte prefix)
-    restored = decompress7(compressed);
+    restored = await decompress7Async(compressed);
   } else {
-    // 'brotli' or any legacy mode: raw Brotli decompression
     restored = decompress(compressed);
   }
 
-  // Step 4: Verify integrity via SHA-256 checksum
   const integrityVerified = verify(restored, metadata.originalChecksum);
 
   if (!integrityVerified) {
@@ -328,6 +351,88 @@ export function macro(
     metadata,
     integrityVerified,
   };
+}
+
+/**
+ * Execute the Macro pipeline: decrypt then decompress.
+ *
+ * Automatically detects package version and applies the correct
+ * decompression strategy (v1 = Brotli, v2 = 7-fold adaptive).
+ * Also automatically detects encrypted vs plaintext metadata.
+ *
+ * @param craftBuffer — The .craft package buffer
+ * @param passphrase — Decryption passphrase
+ * @returns MacroResult with the restored data and verification status
+ */
+export async function macro(
+  craftBuffer: Buffer,
+  passphrase: string,
+): Promise<MacroResult> {
+  // Input validation
+  assertValidCraftPackage(craftBuffer);
+  if (!passphrase || passphrase.length === 0) {
+    throw new Error('Passphrase is required for Macro extraction.');
+  }
+  if (passphrase.length < 12) {
+    throw new Error('Passphrase must be at least 12 characters for secure decryption.');
+  }
+
+  // Step 1: Parse the .craft package (structure + validation, no decryption)
+  const pkg = parsePackage(craftBuffer);
+
+  // Step 2: Derive keys and decrypt. The metadata and payload each carry
+  // their own random salt, so each requires its own PBKDF2 derivation.
+  let metadata: CraftMetadata;
+  if (pkg.metadataEncrypted) {
+    const { key: metaKey } = await deriveKeyAsync(passphrase, pkg.metaSalt as Buffer);
+    metadata = decryptMetadataSection(pkg, metaKey);
+  } else {
+    metadata = pkg.metadata as CraftMetadata;
+  }
+
+  const { key: dataKey } = await deriveKeyAsync(passphrase, pkg.salt);
+  const compressed = decryptWithKey(pkg.encrypted, dataKey, pkg.iv, pkg.authTag);
+
+  // Step 3: Decompress + verify integrity
+  return await finishMacro(metadata, compressed);
+}
+
+/**
+ * Execute the Macro pipeline with already-derived keys.
+ *
+ * Identical to `macro()` except the caller supplies the derived metadata and
+ * data keys instead of a passphrase, so no PBKDF2 derivation runs here. Used
+ * by nano()'s self-verification: it already holds the exact keys it just
+ * derived, and re-deriving them from the package salts would double the
+ * dominant cost of the whole operation for zero extra assurance. Reuse is
+ * safe because the keys come from the same PBKDF2-SHA256 (600,000 iterations,
+ * 16-byte salt) derivation and are fully determined by the package salts.
+ *
+ * @param craftBuffer — The .craft package buffer
+ * @param keys — { metaKey?, dataKey }: dataKey is always required; metaKey is
+ *               required only when the package has encrypted metadata
+ * @returns MacroResult with the restored data and verification status
+ */
+export async function macroWithKeys(
+  craftBuffer: Buffer,
+  keys: { metaKey?: Buffer; dataKey: Buffer },
+): Promise<MacroResult> {
+  assertValidCraftPackage(craftBuffer);
+
+  const pkg = parsePackage(craftBuffer);
+
+  let metadata: CraftMetadata;
+  if (pkg.metadataEncrypted) {
+    if (!keys.metaKey) {
+      throw new Error('Invalid CRAFT package: encrypted metadata requires a metaKey to decrypt.');
+    }
+    metadata = decryptMetadataSection(pkg, keys.metaKey);
+  } else {
+    metadata = pkg.metadata as CraftMetadata;
+  }
+
+  const compressed = decryptWithKey(pkg.encrypted, keys.dataKey, pkg.iv, pkg.authTag);
+  return await finishMacro(metadata, compressed);
 }
 
 /**

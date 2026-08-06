@@ -84,20 +84,20 @@ describe('fuzzing: nano/macro roundtrip with random data', () => {
   const sizes = [1, 7, 13, 64, 256, 1000, 4096];
 
   for (const size of sizes) {
-    test(`seeded random roundtrip ${size}B`, () => {
+    test(`seeded random roundtrip ${size}B`, async () => {
       const data = seededRandom(size, size);
-      const pkg = nano(data, `f${size}.bin`, 'application/octet-stream', PASS);
-      const restored = macro(pkg.buffer, PASS);
+      const pkg = await nano(data, `f${size}.bin`, 'application/octet-stream', PASS);
+      const restored = await macro(pkg.buffer, PASS);
       expect(restored.buffer).toEqual(data);
       expect(restored.integrityVerified).toBe(true);
     });
   }
 
-  test('multiple different seeds produce valid packages', () => {
+  test('multiple different seeds produce valid packages', async () => {
     for (let seed = 0; seed < 8; seed++) {
       const data = seededRandom(seed * 1337, 1000 + (seed * 137));
-      const pkg = nano(data, `fuzz-${seed}.bin`, 'application/octet-stream', PASS);
-      const restored = macro(pkg.buffer, PASS);
+      const pkg = await nano(data, `fuzz-${seed}.bin`, 'application/octet-stream', PASS);
+      const restored = await macro(pkg.buffer, PASS);
       expect(restored.buffer).toEqual(data);
     }
   });
@@ -192,25 +192,25 @@ describe('fuzzing: integrity with random data', () => {
 });
 
 describe('fuzzing: combined operations stress test', () => {
-  test('nano then compress7 then encrypt chain', () => {
+  test('nano then compress7 then encrypt chain', async () => {
     const data = randomBytes(3000);
 
     // Chain multiple operations
-    const pkg = nano(data, 'chain.bin', 'application/octet-stream', PASS);
+    const pkg = await nano(data, 'chain.bin', 'application/octet-stream', PASS);
     const compressed = compress7(pkg.buffer); // Compress the package
     const { encrypted, iv, authTag, salt } = encrypt(compressed.data, PASS);
 
     // Reverse the chain
     const decrypted = decrypt(encrypted, PASS, iv, authTag, salt);
     const decompressed = decompress7(decrypted);
-    const restored = macro(decompressed, PASS);
+    const restored = await macro(decompressed, PASS);
 
     expect(restored.buffer).toEqual(data);
   });
 });
 
 describe('fuzzing: boundary value testing', () => {
-  test('sizes around power-of-2 boundaries', () => {
+  test('sizes around power-of-2 boundaries', async () => {
     const boundaries = [
       1, 7, 8, 9,
       127, 128, 129,
@@ -221,40 +221,40 @@ describe('fuzzing: boundary value testing', () => {
 
     for (const size of boundaries) {
       const data = seededRandom(size, size);
-      const pkg = nano(data, `boundary${size}.bin`, 'application/octet-stream', PASS);
-      const restored = macro(pkg.buffer, PASS);
+      const pkg = await nano(data, `boundary${size}.bin`, 'application/octet-stream', PASS);
+      const restored = await macro(pkg.buffer, PASS);
       expect(restored.buffer.length).toBe(size);
       expect(restored.buffer).toEqual(data);
     }
   }, 60000); // 60s timeout for many nano/macro roundtrips
 
-  test('filenames of various lengths around boundaries', () => {
+  test('filenames of various lengths around boundaries', async () => {
     const lengths = [1, 2, 3, 31, 32, 33, 63, 64, 65, 127, 128];
 
     for (const len of lengths) {
       const name = 'a'.repeat(len);
       const data = Buffer.from(`filename-length-${len}`);
-      const pkg = nano(data, `${name}.txt`, 'text/plain', PASS);
-      const restored = macro(pkg.buffer, PASS);
+      const pkg = await nano(data, `${name}.txt`, 'text/plain', PASS);
+      const restored = await macro(pkg.buffer, PASS);
       expect(restored.buffer).toEqual(data);
     }
   });
 });
 
 describe('fuzzing: adversarial inputs', () => {
-  test('data designed to confuse LZ compression', () => {
+  test('data designed to confuse LZ compression', async () => {
     // Data that looks compressible but isn't (BWT-like worst case)
     const data = Buffer.alloc(5000);
     for (let i = 0; i < data.length; i++) {
       // Create long-range repetitions that are slightly off
       data[i] = (i * 127 + i % 256) & 0xFF;
     }
-    const pkg = nano(data, 'adversarial-lz.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'adversarial-lz.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('data with embedded magic bytes', () => {
+  test('data with embedded magic bytes', async () => {
     // Try to confuse format detection with embedded CRAFT_MAGIC-like sequences
     const data = Buffer.concat([
       Buffer.from([0x43, 0x52, 0x41, 0x46, 0x54]), // Looks like "CRAFT"
@@ -262,18 +262,18 @@ describe('fuzzing: adversarial inputs', () => {
       Buffer.from([0x03]), // Version byte
       randomBytes(100),
     ]);
-    const pkg = nano(data, 'magic-embedded.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'magic-embedded.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('data with high entropy followed by low entropy', () => {
+  test('data with high entropy followed by low entropy', async () => {
     const data = Buffer.concat([
       randomBytes(2000), // High entropy
       Buffer.alloc(2000, 0x41), // Low entropy (all A's)
     ]);
-    const pkg = nano(data, 'mixed-entropy.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'mixed-entropy.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 });

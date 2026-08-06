@@ -205,7 +205,7 @@ function getMime(filePath: string): string {
   return map[ext] || 'application/octet-stream';
 }
 
-function cmdNano(filePath: string, opts: Record<string, string | boolean>) {
+async function cmdNano(filePath: string, opts: Record<string, string | boolean>) {
   const passphrase = opts.p || opts.passphrase;
   const outputPath = opts.o || opts.output;
   if (!passphrase || typeof passphrase !== 'string') { error('Passphrase is required. Use -p <passphrase>'); process.exit(1); }
@@ -230,7 +230,7 @@ function cmdNano(filePath: string, opts: Record<string, string | boolean>) {
   info(`Running 7-fold compression strategies...`);
 
   const startTime = performance.now();
-  const result = nano(data, fileName, mime, passphrase, { compressionMode: '7fold' });
+  const result = await nano(data, fileName, mime, passphrase, { compressionMode: '7fold' });
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
 
   // Show strategy benchmarks
@@ -277,7 +277,7 @@ function cmdNano(filePath: string, opts: Record<string, string | boolean>) {
   console.log('');
 }
 
-function cmdMacro(filePath: string, opts: Record<string, string | boolean>) {
+async function cmdMacro(filePath: string, opts: Record<string, string | boolean>) {
   const passphrase = opts.p || opts.passphrase;
   const outputPath = opts.o || opts.output;
   if (!passphrase || typeof passphrase !== 'string') { error('Passphrase is required. Use -p <passphrase>'); process.exit(1); }
@@ -293,7 +293,7 @@ function cmdMacro(filePath: string, opts: Record<string, string | boolean>) {
 
   try {
     const startTime = performance.now();
-    const result = macro(craftBuffer, passphrase);
+    const result = await macro(craftBuffer, passphrase);
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
     console.log('');
     success(`Original name: ${result.metadata.originalName}`);
@@ -333,7 +333,7 @@ function cmdMacro(filePath: string, opts: Record<string, string | boolean>) {
  * its metadata WITHOUT loading the whole file — used to derive the default
  * restore filename for `craft macro-stream` without breaking constant memory.
  */
-function peekStreamMetadataHead(filePath: string, passphrase: string): StreamMetadata | null {
+async function peekStreamMetadataHead(filePath: string, passphrase: string): Promise<StreamMetadata | null> {
   try {
     const fd = fs.openSync(filePath, 'r');
     const head = Buffer.alloc(8192);
@@ -348,7 +348,7 @@ function peekStreamMetadataHead(filePath: string, passphrase: string): StreamMet
       fs.closeSync(fd);
     }
     if (got >= 7 && head.subarray(0, 6).equals(CRAFT_MAGIC) && head[6] === STREAM_VERSION) {
-      return peekStreamMetadata(head.subarray(0, got), passphrase);
+      return await peekStreamMetadata(head.subarray(0, got), passphrase);
     }
   } catch { /* fall through → null */ }
   return null;
@@ -443,7 +443,7 @@ async function cmdMacroStream(filePath: string, opts: Record<string, string | bo
   // Resolve the default restore name WITHOUT loading the whole archive for v4.
   let defaultOutName: string | null = null;
   if (version === STREAM_VERSION) {
-    const headMeta = peekStreamMetadataHead(filePath, passphrase as string);
+    const headMeta = await peekStreamMetadataHead(filePath, passphrase as string);
     if (headMeta && headMeta.originalName && headMeta.originalName !== '[encrypted]') {
       defaultOutName = headMeta.originalName;
     }
@@ -521,7 +521,7 @@ function cmdBenchmark(filePath: string) {
   console.log('');
 }
 
-function cmdPeek(filePath: string, opts: Record<string, string | boolean> = {}) {
+async function cmdPeek(filePath: string, opts: Record<string, string | boolean> = {}) {
   if (!fs.existsSync(filePath)) { error(`File not found: ${filePath}`); process.exit(1); }
   const version = peekVersionFromFile(filePath);
   if (version === 0) { error('Not a valid CRAFT package (magic bytes mismatch).'); process.exit(1); }
@@ -533,7 +533,7 @@ function cmdPeek(filePath: string, opts: Record<string, string | boolean> = {}) 
     log('⚙', `${colors.cyan}${colors.bold}CRAFT Peek (streaming, v4)${colors.reset} — Package Inspection`);
     console.log('');
     try {
-      const meta = peekStreamMetadata(craftBuffer, passphrase);
+      const meta = await peekStreamMetadata(craftBuffer, passphrase);
       success(`Archive version: ${meta.version} (streaming v4)`);
       success(`Original name:   ${meta.originalName}`);
       success(`Original size:   ${formatBytes(meta.originalSize)}`);
@@ -621,7 +621,7 @@ async function verifyOneFile(
       }
       // v1–v3: gold-standard macro() (unchanged behaviour — loads the package).
       const buf = packageBuffer ?? fs.readFileSync(craftFilePath);
-      const result = macro(buf, passphrase);
+      const result = await macro(buf, passphrase);
       if (!result.integrityVerified) {
         return { status: 'DEEP-FAIL', detail: 'decrypted, but SHA-256 checksum of the restored data did not match' };
       }
@@ -807,12 +807,12 @@ function cmdVersion() {
   console.log('Brotli Q11 + Delta + MTF + RLE + BPE + Zstd + Craft-Codec + AES-256-GCM + SHA-256');
 }
 
-function cmdDoctor() {
+async function cmdDoctor() {
   console.log('');
   log('⚙', `${colors.teal}${colors.bold}CRAFT Doctor${colors.reset} — environment & pipeline self-test`);
   console.log('');
   try {
-    const result = selfTest();
+    const result = await selfTest();
     success(`Node version: ${result.nodeVersion}`);
     success(`Zstd support:  ${result.zstdAvailable ? 'available' : 'MISSING'}`);
     success(`Round-trip fixtures verified: ${result.checkedStrategies.length}`);
@@ -838,54 +838,61 @@ const command = args[0];
 const filePath = args[1];
 const opts = parseArgs(args.slice(2));
 
-switch (command) {
-  case 'nano':
-    if (!filePath) { error('Usage: craft nano <file> -p <passphrase> [-o <output>]'); process.exit(1); }
-    cmdNano(filePath, opts);
-    break;
-  case 'macro':
-    if (!filePath) { error('Usage: craft macro <file.craft> -p <passphrase> [-o <output>]'); process.exit(1); }
-    cmdMacro(filePath, opts);
-    break;
-  case 'peek':
-    if (!filePath) { error('Usage: craft peek <file.craft> [-p <passphrase>]'); process.exit(1); }
-    cmdPeek(filePath, opts);
-    break;
-  case 'benchmark':
-    if (!filePath) { error('Usage: craft benchmark <file>'); process.exit(1); }
-    cmdBenchmark(filePath);
-    break;
-  case 'checksum':
-    if (!filePath) { error('Usage: craft checksum <file>'); process.exit(1); }
-    cmdChecksum(filePath);
-    break;
-  case 'version': case '-v': case '--version':
-    cmdVersion();
-    break;
-  case 'doctor':
-    cmdDoctor();
-    break;
-  case 'verify':
-    if (!filePath) { error('Usage: craft verify <file.craft | directory> [--deep -p <passphrase>]'); process.exit(1); }
-    cmdVerify(filePath, opts);
-    break;
-  case 'watch':
-    if (!filePath) { error('Usage: craft watch <directory> [--interval 1h] [--log <path>] [--deep -p <passphrase>]'); process.exit(1); }
-    cmdWatch(filePath, opts);
-    break;
-  default:
-    console.log('');
-    console.log(`${colors.amber}${colors.bold}CRAFT${colors.reset} — 7-Fold Nano/Macro Encryption & Compression Engine`);
-    console.log('');
-    console.log('  craft nano <file> -p <passphrase> [-o output.craft] [--force]  7-Fold Compress & encrypt');
-    console.log('  craft macro <file.craft> -p <passphrase> [-o output] [--force] Decrypt & restore');
-    console.log('  craft benchmark <file>                                 Compare all strategies');
-    console.log('  craft peek <file.craft>                                Inspect metadata');
-    console.log('  craft checksum <file>                                  SHA-256 digest');
-    console.log('  craft doctor                                           Verify this environment is safe to use');
-    console.log('  craft verify <file.craft|dir> [--deep -p <pass>]       One-shot bitrot/corruption check');
-    console.log('  craft watch <dir> [--interval 1h] [--log <path>]       Continuously re-verify on a schedule');
-    console.log('  craft version                                         Show version');
-    console.log('');
-    break;
+async function main() {
+  switch (command) {
+    case 'nano':
+      if (!filePath) { error('Usage: craft nano <file> -p <passphrase> [-o <output>]'); process.exit(1); }
+      await cmdNano(filePath, opts);
+      break;
+    case 'macro':
+      if (!filePath) { error('Usage: craft macro <file.craft> -p <passphrase> [-o <output>]'); process.exit(1); }
+      await cmdMacro(filePath, opts);
+      break;
+    case 'peek':
+      if (!filePath) { error('Usage: craft peek <file.craft> [-p <passphrase>]'); process.exit(1); }
+      await cmdPeek(filePath, opts);
+      break;
+    case 'benchmark':
+      if (!filePath) { error('Usage: craft benchmark <file>'); process.exit(1); }
+      cmdBenchmark(filePath);
+      break;
+    case 'checksum':
+      if (!filePath) { error('Usage: craft checksum <file>'); process.exit(1); }
+      cmdChecksum(filePath);
+      break;
+    case 'version': case '-v': case '--version':
+      cmdVersion();
+      break;
+    case 'doctor':
+      await cmdDoctor();
+      break;
+    case 'verify':
+      if (!filePath) { error('Usage: craft verify <file.craft | directory> [--deep -p <passphrase>]'); process.exit(1); }
+      await cmdVerify(filePath, opts);
+      break;
+    case 'watch':
+      if (!filePath) { error('Usage: craft watch <directory> [--interval 1h] [--log <path>] [--deep -p <passphrase>]'); process.exit(1); }
+      cmdWatch(filePath, opts);
+      break;
+    default:
+      console.log('');
+      console.log(`${colors.amber}${colors.bold}CRAFT${colors.reset} — 7-Fold Nano/Macro Encryption & Compression Engine`);
+      console.log('');
+      console.log('  craft nano <file> -p <passphrase> [-o output.craft] [--force]  7-Fold Compress & encrypt');
+      console.log('  craft macro <file.craft> -p <passphrase> [-o output] [--force] Decrypt & restore');
+      console.log('  craft benchmark <file>                                 Compare all strategies');
+      console.log('  craft peek <file.craft>                                Inspect metadata');
+      console.log('  craft checksum <file>                                  SHA-256 digest');
+      console.log('  craft doctor                                           Verify this environment is safe to use');
+      console.log('  craft verify <file.craft|dir> [--deep -p <pass>]       One-shot bitrot/corruption check');
+      console.log('  craft watch <dir> [--interval 1h] [--log <path>]       Continuously re-verify on a schedule');
+      console.log('  craft version                                         Show version');
+      console.log('');
+      break;
+  }
 }
+
+main().catch((err) => {
+  error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});

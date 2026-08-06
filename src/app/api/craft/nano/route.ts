@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const data = Buffer.from(arrayBuffer);
 
-    const result = nano(data, file.name, file.type || 'application/octet-stream', passphrase, {
+    const result = await nano(data, file.name, file.type || 'application/octet-stream', passphrase, {
       compressionMode: '7fold',
     });
     const processingTime = Math.round(performance.now() - startTime);

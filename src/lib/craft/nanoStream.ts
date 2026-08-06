@@ -33,14 +33,14 @@ import {
   NanoStreamResult,
   NanoStreamOptions,
   encryptChunkSync,
-  compressChunk,
+  compressChunkAsync,
   defaultStrategyName,
   deriveDataKey,
   u32be,
   u64be,
   fixedChunks,
-  encryptMetadata,
 } from './streamCore';
+import { encryptMetadataAsync } from './codec';
 import { CRAFT_MAGIC } from './types';
 import { macroStream } from './macroStream';
 
@@ -117,7 +117,7 @@ export async function nanoStream(
 
   // ── Derive the single archive data key (one PBKDF2 per archive) ─
   const dataSalt = randomBytes(16);
-  const dataKey = deriveDataKey(passphrase, dataSalt);
+  const dataKey = await deriveDataKey(passphrase, dataSalt);
 
   // ── Temp staging files (on disk, not RAM) ──────────────────────
   const chunkTmp = tmpName('craft-stream-chunks');
@@ -141,7 +141,9 @@ export async function nanoStream(
     // ── Stage 1: stream input → chunk → compress → AES-GCM → temp file ─
     const sha = createHash('sha256');
     for await (const chunk of fixedChunks(source, chunkSize)) {
-      const compressed = compressChunk(chunk, strategy, level);
+      // Async chunk codec — compression runs on the libuv threadpool, so the
+      // encode loop yields to the event loop instead of blocking per chunk.
+      const compressed = await compressChunkAsync(chunk, strategy, level);
       const encrypted = encryptChunkSync(compressed, dataKey);
       // CHUNK_RECORD = COMP_LEN(4) | IV(12) | TAG(16) | CIPHERTEXT
       const rec = Buffer.concat([u32be(compressed.length), encrypted.iv, encrypted.authTag, encrypted.ciphertext]);
@@ -183,7 +185,7 @@ export async function nanoStream(
     createdAt: new Date().toISOString(),
   };
   const metaJson = Buffer.from(JSON.stringify(metadata), 'utf-8');
-  const { encrypted: encMeta, metaSalt, metaIv, metaAuthTag } = encryptMetadata(metaJson, passphrase);
+  const { encrypted: encMeta, metaSalt, metaIv, metaAuthTag } = await encryptMetadataAsync(metaJson, passphrase);
   const metaSectionLength = CRYPTO_OVERHEAD + encMeta.length;
   const ml = (metaSectionLength | 0x80000000) >>> 0; // bit 31 = metadata encrypted (v3+ convention)
 

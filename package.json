@@ -11,7 +11,7 @@
     "access": "public"
   },
   "bin": {
-    "craft": "./bin/craft"
+    "craft": "./bin/craft.js"
   },
   "exports": {
     ".": {

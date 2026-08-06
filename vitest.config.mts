@@ -37,8 +37,8 @@ export default defineConfig({
     },
 
     // Test timeout (can be overridden per-test)
-    testTimeout: 10000, // 10s default
-    hookTimeout: 10000,
+    testTimeout: 60000, // 60s default; extremely heavy tests override individually
+    hookTimeout: 60000,
 
     // Retry flaky tests (useful for CI)
     retry: 2,

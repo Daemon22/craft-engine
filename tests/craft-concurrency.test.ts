@@ -18,22 +18,22 @@ import { checksum, verify } from '../src/lib/craft/integrity';
 const PASS = 'concurrency-test-passphrase-123';
 
 describe('concurrency: parallel nano operations', () => {
-  test('10 parallel nano calls produce valid packages', () => {
-    const results = Array.from({ length: 10 }, (_, i) => {
+  test('10 parallel nano calls produce valid packages', async () => {
+    const results = await Promise.all(Array.from({ length: 10 }, (_, i) => {
       const data = Buffer.from(`concurrent data ${i} `.repeat(100));
       return nano(data, `file${i}.bin`, 'application/octet-stream', PASS);
-    });
+    }));
 
     // All should produce valid packages that decode correctly
     for (let i = 0; i < results.length; i++) {
       const originalData = Buffer.from(`concurrent data ${i} `.repeat(100));
-      const restored = macro(results[i].buffer, PASS);
+      const restored = await macro(results[i].buffer, PASS);
       expect(restored.buffer).toEqual(originalData);
       expect(restored.integrityVerified).toBe(true);
     }
   });
 
-  test('parallel nano with different passphrases', () => {
+  test('parallel nano with different passphrases', async () => {
     const packages = Array.from({ length: 5 }, (_, i) => {
       const data = Buffer.from(`passphrase-${i} data `.repeat(50));
       const pass = `unique-passphrase-number-${i}`;
@@ -42,11 +42,12 @@ describe('concurrency: parallel nano operations', () => {
 
     // Each should only decode with its own passphrase
     for (const { pkg, pass, data } of packages) {
-      const restored = macro(pkg.buffer, pass);
+      const pkgBuffer = (await pkg).buffer;
+      const restored = await macro(pkgBuffer, pass);
       expect(restored.buffer).toEqual(data);
 
       // Should fail with wrong passphrase
-      expect(() => macro(pkg.buffer, 'wrong-password')).toThrow();
+      await expect(macro(pkgBuffer, 'wrong-password')).rejects.toThrow();
     }
   });
 });
@@ -137,17 +138,17 @@ describe('concurrency: parallel integrity operations', () => {
 });
 
 describe('concurrency: mixed operations in parallel', () => {
-  test('nano + compress7 + encrypt running together', () => {
+  test('nano + compress7 + encrypt running together', async () => {
     const baseData = Buffer.from('mixed-workload-test '.repeat(200));
 
     // Run different operation types
-    const nanoResult = nano(baseData, 'mixed.bin', 'application/octet-stream', PASS);
+    const nanoResult = await nano(baseData, 'mixed.bin', 'application/octet-stream', PASS);
     const compressResult = compress7(baseData);
     const encryptResult = encrypt(baseData, PASS);
     const hashResult = checksum(baseData);
 
     // Verify all produced valid results
-    const restoredNano = macro(nanoResult.buffer, PASS);
+    const restoredNano = await macro(nanoResult.buffer, PASS);
     expect(restoredNano.buffer).toEqual(baseData);
 
     expect(decompress7(compressResult.data)).toEqual(baseData);
@@ -156,25 +157,25 @@ describe('concurrency: mixed operations in parallel', () => {
     expect(hashResult).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  test('sequential then parallel operations maintain correctness', () => {
+  test('sequential then parallel operations maintain correctness', async () => {
     // First do a sequential operation
     const seqData = Buffer.from('sequential-first '.repeat(100));
-    const seqPkg = nano(seqData, 'seq.bin', 'text/plain', PASS);
-    expect(macro(seqPkg.buffer, PASS).buffer).toEqual(seqData);
+    const seqPkg = await nano(seqData, 'seq.bin', 'text/plain', PASS);
+    expect((await macro(seqPkg.buffer, PASS)).buffer).toEqual(seqData);
 
     // Then run parallel operations
-    const parResults = Array.from({ length: 5 }, (_, i) => {
+    const parResults = await Promise.all(Array.from({ length: 5 }, (_, i) => {
       const data = Buffer.from(`parallel-after-seq-${i} `.repeat(80));
       return nano(data, `par${i}.bin`, 'text/plain', PASS);
-    });
+    }));
 
     // Original sequential result should still be valid
-    expect(macro(seqPkg.buffer, PASS).buffer).toEqual(seqData);
+    expect((await macro(seqPkg.buffer, PASS)).buffer).toEqual(seqData);
 
     // Parallel results should also be valid
     for (let i = 0; i < parResults.length; i++) {
       const expected = Buffer.from(`parallel-after-seq-${i} `.repeat(80));
-      expect(macro(parResults[i].buffer, PASS).buffer).toEqual(expected);
+      expect((await macro(parResults[i].buffer, PASS)).buffer).toEqual(expected);
     }
   });
 });

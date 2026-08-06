@@ -1,7 +1,7 @@
 /**
  * Tests for the `@manya/craft-engine/lib/craft` subpath export
- * (src/lib/craft/*) — a separate, sync-API implementation from the
- * main `src/lib/index.ts` export covered by craft.test.ts.
+ * (src/lib/craft/*) — a separate implementation from the main
+ * `src/lib/index.ts` export covered by craft.test.ts.
  *
  * This file previously had zero test coverage, which is how the
  * metadata-encryption detection bug below went unnoticed: nano()/macro()
@@ -18,7 +18,7 @@ import { randomBytes, createCipheriv } from 'crypto';
 
 const PASS = 'super-secret-passphrase-123';
 
-describe('lib/craft: nano -> macro roundtrip (sync API)', () => {
+describe('lib/craft: nano -> macro roundtrip', () => {
   const fixtures = [
     { name: 'text', data: Buffer.from('Hello, Craft Engine!\n'.repeat(100)) },
     { name: 'all-256-byte-values', data: Buffer.concat(Array(20).fill(Buffer.from(Array.from({ length: 256 }, (_, i) => i)))) },
@@ -26,25 +26,25 @@ describe('lib/craft: nano -> macro roundtrip (sync API)', () => {
   ];
 
   for (const { name, data } of fixtures) {
-    test(name, () => {
-      const pkg = nano(data, `${name}.bin`, 'application/octet-stream', PASS);
-      const restored = macro(pkg.buffer, PASS);
+    test(name, async () => {
+      const pkg = await nano(data, `${name}.bin`, 'application/octet-stream', PASS);
+      const restored = await macro(pkg.buffer, PASS);
       expect(restored.buffer).toEqual(data);
       expect(restored.integrityVerified).toBe(true);
     });
   }
 
-  test('plaintext metadata mode roundtrips', () => {
+  test('plaintext metadata mode roundtrips', async () => {
     const data = Buffer.from('plaintext metadata test '.repeat(50));
-    const pkg = nano(data, 'f.txt', 'text/plain', PASS, { encryptMetadata: false });
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'f.txt', 'text/plain', PASS, { encryptMetadata: false });
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('legacy brotli compression mode roundtrips', () => {
+  test('legacy brotli compression mode roundtrips', async () => {
     const data = Buffer.from('legacy mode test data '.repeat(80));
-    const pkg = nano(data, 'f.txt', 'text/plain', PASS, { compressionMode: 'brotli' });
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'f.txt', 'text/plain', PASS, { compressionMode: 'brotli' });
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 });
@@ -57,7 +57,7 @@ describe('lib/craft: metadata detection (regression)', () => {
   // misidentified as plaintext, permanently failing to decrypt even with
   // the correct passphrase. This test forces that exact salt collision
   // to prove the current explicit-flag-based format (v3+) is immune.
-  test('correctly decrypts when the metadata salt starts with 0x7B', () => {
+  test('correctly decrypts when the metadata salt starts with 0x7B', async () => {
     const data = Buffer.from('hello world '.repeat(30));
     const compressed = compress(data);
     const metadataJson = Buffer.from(JSON.stringify({
@@ -95,20 +95,20 @@ describe('lib/craft: metadata detection (regression)', () => {
       salt, iv, authTag, encrypted,
     ]);
 
-    const result = macro(buffer, PASS);
+    const result = await macro(buffer, PASS);
     expect(result.buffer).toEqual(data);
     expect(result.metadata.originalName).toBe('secret.txt');
   });
 
-  test('peekMetadata reports the correct version and redacts encrypted metadata', () => {
+  test('peekMetadata reports the correct version and redacts encrypted metadata', async () => {
     const data = Buffer.from('peek test data '.repeat(20));
-    const pkg = nano(data, 'secretname.txt', 'text/plain', PASS);
+    const pkg = await nano(data, 'secretname.txt', 'text/plain', PASS);
     const meta = peekMetadata(pkg.buffer);
     expect(meta.originalName).toBe('[encrypted]');
     expect(meta.version).toBe(CRAFT_VERSION);
   });
 
-  test('still decodes a legacy v2 package (pre-flag format, no collision)', () => {
+  test('still decodes a legacy v2 package (pre-flag format, no collision)', async () => {
     // Simulates a package written before the v3 explicit-flag fix, using
     // the old header layout (no bit-31 flag) with a non-colliding salt.
     const data = Buffer.from('legacy v2 package data '.repeat(20));
@@ -146,25 +146,25 @@ describe('lib/craft: metadata detection (regression)', () => {
       salt, iv, authTag, encrypted,
     ]);
 
-    const result = macro(buffer, PASS);
+    const result = await macro(buffer, PASS);
     expect(result.buffer).toEqual(data);
     expect(result.metadata.originalName).toBe('legacy.txt');
   });
 });
 
 describe('lib/craft: error handling', () => {
-  test('wrong passphrase throws', () => {
+  test('wrong passphrase throws', async () => {
     const data = Buffer.from('secret data here');
-    const pkg = nano(data, 'a.txt', 'text/plain', PASS);
-    expect(() => macro(pkg.buffer, 'a-different-passphrase-99')).toThrow();
+    const pkg = await nano(data, 'a.txt', 'text/plain', PASS);
+    await expect(macro(pkg.buffer, 'a-different-passphrase-99')).rejects.toThrow();
   });
 
-  test('tampered ciphertext is rejected via the GCM auth tag', () => {
+  test('tampered ciphertext is rejected via the GCM auth tag', async () => {
     const data = Buffer.from('important data to protect '.repeat(30));
-    const pkg = nano(data, 'f.txt', 'text/plain', PASS);
+    const pkg = await nano(data, 'f.txt', 'text/plain', PASS);
     const tampered = Buffer.from(pkg.buffer);
     tampered[tampered.length - 5] ^= 0xff;
-    expect(() => macro(tampered, PASS)).toThrow();
+    await expect(macro(tampered, PASS)).rejects.toThrow();
   });
 });
 
@@ -174,14 +174,14 @@ describe('lib/craft: Zstd strategies (10, 11)', () => {
   // it exercises the actual selection path (not just a forced strategy
   // byte), so it also proves decompress7 routes strategies 10/11 through
   // zstdDecompressSync instead of the Brotli path every other strategy uses.
-  test('adaptive selection picks Zstd when it produces the smallest output', () => {
+  test('adaptive selection picks Zstd when it produces the smallest output', async () => {
     const data = Buffer.from((
       'The quick brown fox jumps over the lazy dog. '.repeat(30) +
       'Pack my box with five dozen liquor jugs. '.repeat(30)
     ).repeat(10));
 
-    const pkg = nano(data, 'f.txt', 'text/plain', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'f.txt', 'text/plain', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
     expect(pkg.metadata.compressionStrategyName).toContain('Zstd');
   });
@@ -260,10 +260,12 @@ describe('lib/craft: Craft-Codec strategy (12, @manya/craft-codec)', () => {
     // Increased timeout: craft-codec (strategy 12) is O(256) per symbol and
     // gated to inputs <= 4MB, but we test slightly above that boundary to
     // verify the skip logic works. The large input + all 12 strategies needs
-    // more than the default 5s timeout.
+    // more than the default 5s timeout — measured ~2.2min on a mid-range
+    // machine (10x Brotli Q11 + 2x Zstd L22 passes over ~4MB incompressible
+    // data), so allow 5 minutes here rather than fighting the clock.
     const data = require('crypto').randomBytes(4 * 1024 * 1024 + 1000);
     const c = compress7(data);
     expect(c.strategy).not.toBe(12);
     expect(decompress7(c.data)).toEqual(data);
-  }, 60000);
+  }, 300000);
 });

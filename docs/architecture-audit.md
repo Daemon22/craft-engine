@@ -75,7 +75,7 @@ craft-engine/
 │  └─ lib/                        # (see §3)
 ├─ tests/                         # 10 vitest suites + scratch artifacts
 ├─ tsconfig.{base,cjs,esm,test,types}.json
-├─ vitest.config.ts
+├─ vitest.config.mts
 ├─ package.json
 └─ harden-world.log               # tail of a harden run
 ```
@@ -363,7 +363,7 @@ There is **no runtime config file**. Configuration is:
   `DEFAULT_STREAM_CHUNK_SIZE = 1 MiB`, watch interval `1h`, Zstd level 19,
   Brotli quality 11 (single-file) / 9 (test), PBKDF2 600k.
 - **`package.json` scripts** (build/test/lint/typecheck/db/doctor/start).
-- **tsconfig matrix + vitest.config** (see §15) and **`craft-codec/tsconfig.json`**.
+- **tsconfig matrix + vitest.config.mts** (see §15) and **`craft-codec/tsconfig.json`**.
 - **Environment:** none read by the library. `db.ts` uses
   `process.env.NODE_ENV` only. 〔inferred: no secrets/config module exists in the
   lib; passphrases are always explicit parameters.〕
@@ -475,8 +475,8 @@ components** — it is a pure API shim over the sync library.
 
 ## 16. Test architecture
 
-Vitest 4 (`vitest.config.ts`): `globals:true`, node env, `tests/**/*.test.ts`,
-`testTimeout:10000`, `retry:2`, `isolate:true`, v8 coverage with thresholds
+Vitest 4 (`vitest.config.mts`): `globals:true`, node env, `tests/**/*.test.ts`,
+`testTimeout:60000`, `retry:2`, `isolate:true`, v8 coverage with thresholds
 (statements 70 / branches 60 / functions 70 / lines 70) over `src/lib/**`.
 
 Ten suites:
