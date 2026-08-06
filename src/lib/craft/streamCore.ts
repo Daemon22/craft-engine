@@ -27,11 +27,15 @@ import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
 import {
   brotliCompressSync,
   brotliDecompressSync,
+  brotliCompress,
+  brotliDecompress,
   zstdCompressSync,
   zstdDecompressSync,
+  zstdCompress,
+  zstdDecompress,
   constants as zlibConstants,
 } from 'zlib';
-import { deriveKey, encryptMetadata, decryptMetadata } from './codec';
+import { deriveKeyAsync, encryptMetadata, decryptMetadata } from './codec';
 import {
   CRAFT_MAGIC,
   SALT_LENGTH,
@@ -267,6 +271,82 @@ export function decompressChunk(data: Buffer, strategy: 'zstd' | 'brotli'): Buff
   return brotliDecompressSync(data);
 }
 
+// ─────────────────────────────────────────────────────────────
+// Async per-chunk codec (libuv threadpool — off the main thread)
+// ─────────────────────────────────────────────────────────────
+
+/** Promise-wrapped Brotli compress for one chunk (same params as sync). */
+function brotliCompressAsync(data: Buffer, quality: number, window: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    brotliCompress(data, {
+      params: {
+        [zlibConstants.BROTLI_PARAM_QUALITY]: quality,
+        [zlibConstants.BROTLI_PARAM_LGWIN]: window,
+      },
+    }, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+}
+
+/** Promise-wrapped Zstd compress for one chunk (same params as sync).
+ *  `pledgedSrcSize` mirrors the one-shot sync encoder's single-segment frame. */
+function zstdCompressAsync(data: Buffer, level: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    // `pledgedSrcSize` is supported by Node's runtime but not yet in @types/node.
+    zstdCompress(data, {
+      params: { [zlibConstants.ZSTD_c_compressionLevel]: level },
+      pledgedSrcSize: data.length,
+    } as Parameters<typeof zstdCompress>[1], (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+}
+
+function brotliDecompressAsync(data: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    brotliDecompress(data, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+}
+
+function zstdDecompressAsync(data: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    zstdDecompress(data, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+}
+
+/**
+ * Async per-chunk compress — byte-identical to `compressChunk`, but the codec
+ * runs on the libuv threadpool so each chunk no longer stalls the event loop
+ * (and chunks from concurrent archives parallelize across the pool).
+ */
+export async function compressChunkAsync(
+  data: Buffer,
+  strategy: 'zstd' | 'brotli',
+  levelOrQuality?: number,
+): Promise<Buffer> {
+  if (strategy === 'zstd') {
+    const level = Math.min(Math.max(1, levelOrQuality ?? 19), 22);
+    return zstdCompressAsync(data, level);
+  }
+  const quality = Math.min(Math.max(0, levelOrQuality ?? 11), 11);
+  return brotliCompressAsync(data, quality, 24);
+}
+
+/** Async per-chunk decompress — byte-identical to `decompressChunk`. */
+export async function decompressChunkAsync(data: Buffer, strategy: 'zstd' | 'brotli'): Promise<Buffer> {
+  if (strategy === 'zstd') return zstdDecompressAsync(data);
+  return brotliDecompressAsync(data);
+}
+
 export function defaultStrategyName(strategy: 'zstd' | 'brotli', level?: number): string {
   if (strategy === 'zstd') return `Zstd L${level ?? 19} chunked streaming`;
   return `Brotli Q${level ?? 11} (independent per chunk)`;
@@ -297,9 +377,9 @@ export function resolveStreamMetaEncryption(
   throw new Error(`Unsupported CRAFT version for streaming metadata: ${version}`);
 }
 
-/** Metadata-key derivation over the archive data salt. */
-export function deriveDataKey(passphrase: string, dataSalt: Buffer): Buffer {
-  return deriveKey(passphrase, dataSalt).key;
+/** Metadata-key derivation over the archive data salt (async — off the main thread). */
+export async function deriveDataKey(passphrase: string, dataSalt: Buffer): Promise<Buffer> {
+  return (await deriveKeyAsync(passphrase, dataSalt)).key;
 }
 
 /** Metadata helpers reused from ./codec (encrypted with their own salt). */

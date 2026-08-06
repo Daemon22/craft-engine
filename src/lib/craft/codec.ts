@@ -16,7 +16,7 @@
  *  that identical passphrases produce different keys each time.
  */
 
-import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync, pbkdf2 } from 'crypto';
 import { brotliCompressSync, brotliDecompressSync, constants as zlibConstants } from 'zlib';
 import {
   SALT_LENGTH,
@@ -44,6 +44,24 @@ export function deriveKey(passphrase: string, salt?: Buffer): { key: Buffer; sal
   const actualSalt = salt ?? randomBytes(SALT_LENGTH);
   const key = pbkdf2Sync(passphrase, actualSalt, PBKDF2_ITERATIONS, AES_KEY_LENGTH, 'sha256');
   return { key, salt: actualSalt };
+}
+
+/**
+ * Async PBKDF2-SHA256 key derivation with identical parameters
+ * (600,000 iterations, 16-byte salt, 256-bit key). Runs off the main
+ * thread so the event loop stays responsive under concurrent load.
+ */
+export function deriveKeyAsync(
+  passphrase: string,
+  salt?: Buffer,
+): Promise<{ key: Buffer; salt: Buffer }> {
+  const actualSalt = salt ?? randomBytes(SALT_LENGTH);
+  return new Promise((resolve, reject) => {
+    pbkdf2(passphrase, actualSalt, PBKDF2_ITERATIONS, AES_KEY_LENGTH, 'sha256', (err, key) => {
+      if (err) reject(err);
+      else resolve({ key, salt: actualSalt });
+    });
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -79,7 +97,7 @@ export function decompress(data: Buffer): Buffer {
 }
 
 // Re-export 7-fold compression engine
-export { compress7, decompress7 } from './compress7';
+export { compress7, decompress7, compress7Async, decompress7Async } from './compress7';
 export type { Compress7Result, CompressionStrategy } from './compress7';
 
 // ─────────────────────────────────────────────────────────────
@@ -110,6 +128,28 @@ export interface EncryptResult {
  */
 export function encrypt(data: Buffer, passphrase: string): EncryptResult {
   const { key, salt } = deriveKey(passphrase);
+  return encryptWithKey(data, key, salt);
+}
+
+/**
+ * Async variant of encrypt — PBKDF2 runs off the main thread.
+ * Use in server/async contexts so concurrent requests don't serialize.
+ */
+export async function encryptAsync(data: Buffer, passphrase: string): Promise<EncryptResult> {
+  const { key, salt } = await deriveKeyAsync(passphrase);
+  return encryptWithKey(data, key, salt);
+}
+
+/**
+ * Encrypt data with an already-derived key (no PBKDF2 derivation).
+ *
+ * Used to reuse a freshly derived key across encryption and the subsequent
+ * self-verification round-trip, removing redundant derivations (nano() goes
+ * from 4 to 2) without weakening security: the key still comes from
+ * PBKDF2-SHA256 with 600,000 iterations and a 16-byte salt, and the salt is
+ * carried alongside so the package remains fully self-describing.
+ */
+export function encryptWithKey(data: Buffer, key: Buffer, salt: Buffer): EncryptResult {
   const iv = randomBytes(IV_LENGTH);
 
   const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -146,7 +186,34 @@ export function decrypt(
   salt: Buffer,
 ): Buffer {
   const { key } = deriveKey(passphrase, salt);
+  return decryptWithKey(encrypted, key, iv, authTag);
+}
 
+/**
+ * Async variant of decrypt — PBKDF2 runs off the main thread.
+ * Use in server/async contexts so concurrent requests don't serialize.
+ */
+export async function decryptAsync(
+  encrypted: Buffer,
+  passphrase: string,
+  iv: Buffer,
+  authTag: Buffer,
+  salt: Buffer,
+): Promise<Buffer> {
+  const { key } = await deriveKeyAsync(passphrase, salt);
+  return decryptWithKey(encrypted, key, iv, authTag);
+}
+
+/**
+ * Decrypt with an already-derived key (no PBKDF2 derivation).
+ * The companion to encryptWithKey for key-reuse across operations.
+ */
+export function decryptWithKey(
+  encrypted: Buffer,
+  key: Buffer,
+  iv: Buffer,
+  authTag: Buffer,
+): Buffer {
   const decipher = createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(authTag);
 
@@ -179,6 +246,29 @@ export interface MetadataEncryptResult {
  */
 export function encryptMetadata(metaJson: Buffer, passphrase: string): MetadataEncryptResult {
   const { key, salt: metaSalt } = deriveKey(passphrase);
+  return encryptMetadataWithKey(metaJson, key, metaSalt);
+}
+
+/**
+ * Async variant of encryptMetadata — PBKDF2 runs off the main thread.
+ */
+export async function encryptMetadataAsync(
+  metaJson: Buffer,
+  passphrase: string,
+): Promise<MetadataEncryptResult> {
+  const { key, salt: metaSalt } = await deriveKeyAsync(passphrase);
+  return encryptMetadataWithKey(metaJson, key, metaSalt);
+}
+
+/**
+ * Encrypt metadata with an already-derived key (no PBKDF2 derivation).
+ * The metadata key stays separate from the payload key (distinct salt).
+ */
+export function encryptMetadataWithKey(
+  metaJson: Buffer,
+  key: Buffer,
+  metaSalt: Buffer,
+): MetadataEncryptResult {
   const metaIv = randomBytes(IV_LENGTH);
 
   const cipher = createCipheriv('aes-256-gcm', key, metaIv);
@@ -202,7 +292,33 @@ export function decryptMetadata(
   metaAuthTag: Buffer,
 ): Buffer {
   const { key } = deriveKey(passphrase, metaSalt);
+  return decryptMetadataWithKey(encryptedMeta, key, metaIv, metaAuthTag);
+}
 
+/**
+ * Async variant of decryptMetadata — PBKDF2 runs off the main thread.
+ */
+export async function decryptMetadataAsync(
+  encryptedMeta: Buffer,
+  passphrase: string,
+  metaSalt: Buffer,
+  metaIv: Buffer,
+  metaAuthTag: Buffer,
+): Promise<Buffer> {
+  const { key } = await deriveKeyAsync(passphrase, metaSalt);
+  return decryptMetadataWithKey(encryptedMeta, key, metaIv, metaAuthTag);
+}
+
+/**
+ * Decrypt metadata with an already-derived key (no PBKDF2 derivation).
+ * The companion to encryptMetadataWithKey for key-reuse across operations.
+ */
+export function decryptMetadataWithKey(
+  encryptedMeta: Buffer,
+  key: Buffer,
+  metaIv: Buffer,
+  metaAuthTag: Buffer,
+): Buffer {
   const decipher = createDecipheriv('aes-256-gcm', key, metaIv);
   decipher.setAuthTag(metaAuthTag);
 

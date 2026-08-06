@@ -51,8 +51,20 @@
  *    12 = Craft-Codec (order-1 adaptive range coder)
  */
 
-import { brotliCompressSync, brotliDecompressSync, deflateSync, inflateSync, zstdCompressSync, zstdDecompressSync, constants as zlibConstants } from 'zlib';
+import {
+  brotliCompressSync,
+  brotliDecompressSync,
+  brotliCompress as brotliCompressCb,
+  brotliDecompress as brotliDecompressCb,
+  zstdCompressSync,
+  zstdDecompressSync,
+  zstdCompress as zstdCompressCb,
+  zstdDecompress as zstdDecompressCb,
+  constants as zlibConstants,
+} from 'zlib';
 import { compress as craftCodecCompress, decompress as craftCodecDecompress } from '@manya/craft-codec';
+import { deltaEncode, deltaDecode, mtfEncode, mtfDecode, rleEncode, rleDecode, bpeEncode, bpeDecode } from './transforms';
+import { offloadTransform, craftCodecCompressAsync, craftCodecDecompressAsync } from './invokeAsync';
 
 // ─────────────────────────────────────────────────────────────
 // Strategy Types
@@ -65,6 +77,15 @@ export type CompressionStrategy = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 1
  *  so it's noticeably slower than Brotli/Zstd on large inputs, and its
  *  advantage is concentrated in text/structured data which is rarely huge. */
 const CRAFT_CODEC_MAX_SIZE = 4 * 1024 * 1024;
+
+/** In the async engine, Craft-Codec runs off the main thread in a
+ *  worker_threads eval worker (see ./invokeAsync), so it no longer stalls the
+ *  event loop at all. This gate instead bounds the added compress LATENCY on
+ *  the common path (and the worker CPU burned): Craft-Codec's win domain is
+ *  small order-1-favorable data (measured <= ~60KB), so 128KB preserves every
+ *  realistic case where it beats Brotli/Zstd. The sync engine keeps the larger
+ *  CRAFT_CODEC_MAX_SIZE gate. */
+const CRAFT_CODEC_ASYNC_MAX_SIZE = 128 * 1024;
 
 /** Result from the adaptive compression engine */
 export interface Compress7Result {
@@ -87,298 +108,66 @@ export interface Compress7Result {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Fold 2: Delta Encoding
+// Fold 2/3/4/5 pre-processing transforms live in ./transforms (a pure module
+// shared with the worker_threads offload layer). This file only keeps the
+// async chunked variants used to keep multi-MB passes off the event loop.
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Delta encoding: store the difference between consecutive bytes.
- * Transforms [100, 102, 104, 106] → [100, 2, 2, 2]
- * This makes sequential/structured data extremely compressible.
- */
-function deltaEncode(data: Buffer): Buffer {
+/** Byte budget per synchronous slice of the async pre-processing transforms.
+ *  At ~1GB/s per slice this bounds each event-loop gap to well under a
+ *  millisecond at chunk scale while keeping the codec's O(n) work on the main
+ *  thread (these are pure JS — there is no native async variant). */
+const TRANSFORM_SLICE_SIZE = 256 * 1024;
+
+/** Async mirror of `deltaEncode` — byte-identical output, but processes the
+ *  buffer in bounded slices and yields to the event loop between them, so a
+ *  multi-MB delta pass no longer blocks the loop for hundreds of ms. */
+async function deltaEncodeAsync(data: Buffer): Promise<Buffer> {
   const out = Buffer.alloc(data.length);
+  if (data.length === 0) return out;
   out[0] = data[0];
-  for (let i = 1; i < data.length; i++) {
-    out[i] = (data[i] - data[i - 1]) & 0xff;
+  let prev = data[0];
+  for (let start = 1; start < data.length; start += TRANSFORM_SLICE_SIZE) {
+    const end = Math.min(start + TRANSFORM_SLICE_SIZE, data.length);
+    for (let i = start; i < end; i++) {
+      const b = data[i];
+      out[i] = (b - prev) & 0xff;
+      prev = b;
+    }
+    if (end < data.length) await new Promise<void>((resolve) => setImmediate(resolve));
   }
   return out;
 }
 
-/** Inverse of delta encoding — restores original byte sequence */
-function deltaDecode(data: Buffer): Buffer {
-  const out = Buffer.alloc(data.length);
-  out[0] = data[0];
-  for (let i = 1; i < data.length; i++) {
-    out[i] = (out[i - 1] + data[i]) & 0xff;
-  }
-  return out;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Fold 3: Move-to-Front Transform
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Move-to-Front transform (O(n) optimized with index map).
- * Replaces each byte with its position in a moving list.
- * Frequently occurring bytes get small indices, which compress
- * much better with entropy coders.
- *
- * Uses a direct index map (byte → position) for O(1) lookup
- * instead of the naive O(256) linear scan per byte.
- */
-function mtfEncode(data: Buffer): Buffer {
+/** Async mirror of `mtfEncode` — byte-identical output (same alphabet/index-map
+ *  state carried across slices), processing in bounded slices with yields. */
+async function mtfEncodeAsync(data: Buffer): Promise<Buffer> {
   const alphabet = new Uint8Array(256);
-  const indexMap = new Uint8Array(256); // byte -> position (inverse index)
+  const indexMap = new Uint8Array(256);
   for (let i = 0; i < 256; i++) {
     alphabet[i] = i;
     indexMap[i] = i;
   }
   const out = Buffer.allocUnsafe(data.length);
-
-  for (let i = 0; i < data.length; i++) {
-    const byte = data[i];
-    const pos = indexMap[byte];
-    out[i] = pos;
-    // Move to front: shift everything between 0..pos-1 right by 1
-    if (pos > 0) {
-      // Update index map for shifted bytes
-      for (let j = pos; j > 0; j--) {
-        const shiftedByte = alphabet[j - 1];
-        alphabet[j] = shiftedByte;
-        indexMap[shiftedByte] = j;
+  for (let start = 0; start < data.length; start += TRANSFORM_SLICE_SIZE) {
+    const end = Math.min(start + TRANSFORM_SLICE_SIZE, data.length);
+    for (let i = start; i < end; i++) {
+      const byte = data[i];
+      const pos = indexMap[byte];
+      out[i] = pos;
+      if (pos > 0) {
+        for (let j = pos; j > 0; j--) {
+          const shiftedByte = alphabet[j - 1];
+          alphabet[j] = shiftedByte;
+          indexMap[shiftedByte] = j;
+        }
+        alphabet[0] = byte;
+        indexMap[byte] = 0;
       }
-      alphabet[0] = byte;
-      indexMap[byte] = 0;
     }
+    if (end < data.length) await new Promise<void>((resolve) => setImmediate(resolve));
   }
   return out;
-}
-
-/** Inverse of Move-to-Front transform (O(n) optimized) */
-function mtfDecode(data: Buffer): Buffer {
-  const alphabet = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) alphabet[i] = i;
-  const out = Buffer.allocUnsafe(data.length);
-
-  for (let i = 0; i < data.length; i++) {
-    const pos = data[i];
-    const byte = alphabet[pos];
-    out[i] = byte;
-    // Move to front
-    if (pos > 0) {
-      // Shift elements right by 1 from index 0 to pos-1
-      for (let j = pos; j > 0; j--) {
-        alphabet[j] = alphabet[j - 1];
-      }
-      alphabet[0] = byte;
-    }
-  }
-  return out;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Fold 4: Run-Length Encoding
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Run-Length Encoding: collapse repeated byte sequences.
- * [A, A, A, A, B, B] → [A, 4, B, 2]
- * Uses escape byte 0xFF for runs > 2. Single/double bytes pass through.
- */
-function rleEncode(data: Buffer): Buffer {
-  const chunks: Buffer[] = [];
-  let i = 0;
-
-  while (i < data.length) {
-    const byte = data[i];
-    let run = 1;
-    while (i + run < data.length && data[i + run] === byte && run < 255) {
-      run++;
-    }
-
-    if (run >= 3) {
-      // Emit: 0xFF (escape), byte, count
-      chunks.push(Buffer.from([0xff, byte, run]));
-      i += run;
-    } else if (byte === 0xff) {
-      // Escape the escape byte
-      chunks.push(Buffer.from([0xff, 0xff, 1]));
-      i += 1;
-    } else {
-      chunks.push(Buffer.from([byte]));
-      i += 1;
-    }
-  }
-
-  return Buffer.concat(chunks);
-}
-
-/** Inverse of Run-Length Encoding */
-function rleDecode(data: Buffer): Buffer {
-  const chunks: Buffer[] = [];
-  let i = 0;
-
-  while (i < data.length) {
-    if (data[i] === 0xff && i + 2 < data.length) {
-      const byte = data[i + 1];
-      const count = data[i + 2];
-      chunks.push(Buffer.alloc(count, byte));
-      i += 3;
-    } else {
-      chunks.push(Buffer.from([data[i]]));
-      i += 1;
-    }
-  }
-
-  return Buffer.concat(chunks);
-}
-
-// ─────────────────────────────────────────────────────────────
-// Fold 5: Multi-Pair Byte-Pair Encoding (up to 4 pairs)
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Multi-Pair Byte-Pair Encoding: iteratively find and replace the
- * most frequent byte pairs with unused bytes. Up to 4 pairs (or as
- * many unused bytes are available), whichever is fewer.
- *
- * Header format:
- *   [numPairs(1), pair1_replace(1), pair1_hi(1), pair1_lo(1),
- *                pair2_replace(1), pair2_hi(1), pair2_lo(1), ...]
- *
- * Each subsequent pair is found and replaced in the already-replaced
- * data, so later pairs can reference earlier replacement bytes.
- */
-function bpeEncode(data: Buffer): Buffer {
-  if (data.length < 4) return data;
-
-  // Find unused bytes (0x00-0xFF not present in data)
-  const used = new Set<number>();
-  for (let i = 0; i < data.length; i++) used.add(data[i]);
-
-  const unused: number[] = [];
-  for (let b = 0; b < 256; b++) {
-    if (!used.has(b)) unused.push(b);
-  }
-
-  if (unused.length === 0) return data; // All 256 bytes used, can't BPE
-
-  const maxPairs = Math.min(4, unused.length);
-  const pairs: Array<{ replacement: number; hi: number; lo: number }> = [];
-
-  let currentData = data;
-
-  for (let p = 0; p < maxPairs; p++) {
-    // Find most frequent byte pair in current data
-    const pairCounts = new Map<number, number>();
-    for (let i = 0; i < currentData.length - 1; i++) {
-      const pair = (currentData[i] << 8) | currentData[i + 1];
-      pairCounts.set(pair, (pairCounts.get(pair) || 0) + 1);
-    }
-
-    let bestPair = 0;
-    let bestCount = 0;
-    for (const [pair, count] of pairCounts) {
-      if (count > bestCount) {
-        bestCount = count;
-        bestPair = pair;
-      }
-    }
-
-    // Only apply BPE if it actually reduces size
-    // Each replacement saves (count-1) bytes, but we need 3 bytes per pair in header
-    // Net savings: count - 1 - 3 = count - 4. Only worthwhile if count >= 4.
-    if (bestCount < 4) break;
-
-    const replacement = unused[p];
-    const hi = (bestPair >> 8) & 0xff;
-    const lo = bestPair & 0xff;
-
-    pairs.push({ replacement, hi, lo });
-
-    // Replace all occurrences of the pair in current data
-    const result: number[] = [];
-    let i = 0;
-    while (i < currentData.length) {
-      if (i < currentData.length - 1 && currentData[i] === hi && currentData[i + 1] === lo) {
-        result.push(replacement);
-        i += 2;
-      } else {
-        result.push(currentData[i]);
-        i += 1;
-      }
-    }
-
-    currentData = Buffer.from(result);
-  }
-
-  if (pairs.length === 0) return data;
-
-  // Build header: [numPairs, pair1_replace, pair1_hi, pair1_lo, ...]
-  const headerSize = 1 + pairs.length * 3;
-  const header = Buffer.alloc(headerSize);
-  header[0] = pairs.length;
-  for (let p = 0; p < pairs.length; p++) {
-    const offset = 1 + p * 3;
-    header[offset] = pairs[p].replacement;
-    header[offset + 1] = pairs[p].hi;
-    header[offset + 2] = pairs[p].lo;
-  }
-
-  return Buffer.concat([header, currentData]);
-}
-
-/**
- * Inverse of Multi-Pair Byte-Pair Encoding.
- *
- * Decodes pairs in REVERSE order to avoid double-expansion issues.
- * Since later pairs are defined in terms of data that may contain
- * earlier replacement bytes, expanding the last pair first ensures
- * that earlier pair expansions don't accidentally create patterns
- * that would match later pairs.
- */
-function bpeDecode(data: Buffer): Buffer {
-  if (data.length < 5) return data;
-
-  // Read header: number of BPE pairs defined
-  const numPairs = data[0];
-  if (numPairs === 0) return data.subarray(1);
-
-  // Validate we have enough header bytes: 1 (count) + 3 per pair
-  if (data.length < 1 + numPairs * 3) return data;
-
-  const pairs: Array<{ replacement: number; hi: number; lo: number }> = [];
-  let offset = 1;
-  for (let p = 0; p < numPairs; p++) {
-    pairs.push({
-      replacement: data[offset],
-      hi: data[offset + 1],
-      lo: data[offset + 2],
-    });
-    offset += 3;
-  }
-
-  // Decode: process pairs in REVERSE order to avoid double-expansion
-  // Each pair expansion is applied to the full data one at a time
-  let currentData = data.subarray(offset);
-
-  for (let p = numPairs - 1; p >= 0; p--) {
-    const { replacement, hi, lo } = pairs[p];
-    const result: number[] = [];
-
-    for (let i = 0; i < currentData.length; i++) {
-      if (currentData[i] === replacement) {
-        result.push(hi, lo);
-      } else {
-        result.push(currentData[i]);
-      }
-    }
-
-    currentData = Buffer.from(result);
-  }
-
-  return currentData;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -407,6 +196,72 @@ function zstdCompress(data: Buffer): Buffer {
       [zlibConstants.ZSTD_c_compressionLevel]: 22,
       [zlibConstants.ZSTD_c_windowLog]: 24,
     },
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Async codec helpers (libuv threadpool — off the main thread)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Async Brotli Q11 with identical parameters to `brotliCompress`. Runs on the
+ * libuv threadpool so a large input no longer stalls the event loop, and
+ * multiple concurrent calls parallelize across the pool. Brotli is
+ * deterministic given fixed parameters, so the output is byte-identical to the
+ * sync variant.
+ */
+function brotliCompressAsync(data: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    brotliCompressCb(data, {
+      params: {
+        [zlibConstants.BROTLI_PARAM_QUALITY]: 11,
+        [zlibConstants.BROTLI_PARAM_LGWIN]: 24,
+      },
+    }, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+}
+
+function brotliDecompressAsync(data: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    brotliDecompressCb(data, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+}
+
+/** Async Zstd L22 (long window) — mirror of `zstdCompress`, off the main thread.
+ *  `pledgedSrcSize` is passed so the encoder emits a single-segment frame with a
+ *  content-size header like the one-shot sync variant does; for large inputs the
+ *  async frame can still differ from sync by a few header bytes (Node streams the
+ *  input through the transform), but it stays a valid, deterministic, mutually
+ *  decodable zstd frame. */
+function zstdCompressAsync(data: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    // `pledgedSrcSize` is supported by Node's runtime (see zlib.js Zstd ctor)
+    // but not yet in @types/node — cast through the options parameter type.
+    zstdCompressCb(data, {
+      params: {
+        [zlibConstants.ZSTD_c_compressionLevel]: 22,
+        [zlibConstants.ZSTD_c_windowLog]: 24,
+      },
+      pledgedSrcSize: data.length,
+    } as Parameters<typeof zstdCompressCb>[1], (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
+}
+
+function zstdDecompressAsync(data: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    zstdDecompressCb(data, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
   });
 }
 
@@ -617,6 +472,165 @@ function tryAllStrategies(data: Buffer): StrategyAttempt[] {
   return results;
 }
 
+/**
+ * Async mirror of `tryAllStrategies` — same strategy set, same selection
+ * semantics, but Brotli/Zstd work runs on the libuv threadpool instead of the
+ * main thread, so the event loop stays responsive while compressing and
+ * concurrent calls parallelize across the pool.
+ *
+ * The deterministic early-exit decision (strategy 0 < 60% of original) is kept,
+ * and the full-strategy batch is fired concurrently via Promise.allSettled.
+ * Brotli is deterministic given fixed parameters, so every Brotli attempt (0-9)
+ * is byte-identical to the sync engine's. Zstd frames (10, 11) are also
+ * deterministic and valid but can differ from the sync engine's by a few frame
+ * header bytes (Node's async zstd streams the input through a transform); both
+ * variants decode interchangeably. The attempt list is assembled in the same
+ * order as the sync version so the benchmark table (`allResults`) matches too.
+ * Craft-Codec (12) is a synchronous pure-JS codec with no threadpool variant,
+ * but it is offloaded to a worker_threads eval worker (see ./invokeAsync), so
+ * it never stalls the event loop; it stays gated to inputs <=
+ * CRAFT_CODEC_ASYNC_MAX_SIZE (~128KB) to bound compress latency, which fully
+ * covers its win domain (small order-1-favorable data).
+ */
+async function tryAllStrategiesAsync(data: Buffer): Promise<StrategyAttempt[]> {
+  const results: StrategyAttempt[] = [];
+
+  // For very small inputs (< 16 bytes), only try raw Brotli.
+  if (data.length < 16) {
+    try {
+      const c0 = await brotliCompressAsync(data);
+      results.push({ strategy: 0, name: 'Brotli Q11', data, compressed: c0 });
+    } catch { /* skip */ }
+    return results;
+  }
+
+  // Strategy 0 (raw Brotli) fires first so its threadpool pass overlaps the
+  // main-thread delta/MTF transforms below. Strategies 1 and 5 depend on those
+  // transforms and fire as soon as their input is ready.
+  const c0Promise = brotliCompressAsync(data);
+
+  // Shared transform, computed once and reused by strategies 1, 5, 6, 9, 11.
+  // Computed via the async chunked variant so a multi-MB delta pass yields to
+  // the event loop (byte-identical to the sync `deltaEncode`).
+  let deltaOfData: Buffer | undefined;
+  try {
+    deltaOfData = await deltaEncodeAsync(data);
+  } catch { /* skip — dependent strategies below will no-op via the guard */ }
+
+  const c1Promise = deltaOfData
+    ? brotliCompressAsync(deltaOfData)
+    : Promise.reject(new Error('deltaOfData unavailable'));
+  const mtfOfDelta = deltaOfData ? await mtfEncodeAsync(deltaOfData) : undefined;
+  const c5Promise = mtfOfDelta
+    ? brotliCompressAsync(mtfOfDelta)
+    : Promise.reject(new Error('mtfOfDelta unavailable'));
+
+  const [c0Result, c1Result, c5Result] = await Promise.allSettled([
+    c0Promise,
+    c1Promise,
+    c5Promise,
+  ]);
+
+  const c0 = c0Result.status === 'fulfilled' ? c0Result.value : undefined;
+  if (c0) results.push({ strategy: 0, name: 'Brotli Q11', data, compressed: c0 });
+  if (c1Result.status === 'fulfilled' && deltaOfData) {
+    results.push({ strategy: 1, name: 'Delta + Brotli', data: deltaOfData, compressed: c1Result.value });
+  }
+  if (c5Result.status === 'fulfilled' && mtfOfDelta) {
+    results.push({ strategy: 5, name: 'Delta + MTF + Brotli', data: mtfOfDelta, compressed: c5Result.value });
+  }
+
+  // Early-exit check: if Brotli already achieves < 60% of original size, the
+  // data is well-compressible. Only try the lightweight coverage strategies.
+  const earlyExit = c0 !== undefined && c0.length < data.length * 0.6;
+
+  if (earlyExit) {
+    try {
+      const c10 = await zstdCompressAsync(data);
+      results.push({ strategy: 10, name: 'Zstd L22', data, compressed: c10 });
+    } catch { /* skip */ }
+    if (data.length <= CRAFT_CODEC_ASYNC_MAX_SIZE) {
+      try {
+        const c12 = await craftCodecCompressAsync(data);
+        results.push({ strategy: 12, name: 'Craft-Codec (order-1)', data, compressed: c12 });
+      } catch { /* skip */ }
+    }
+    return results;
+  }
+
+  // ── Full strategy set ──
+  // Shared transforms, computed once and reused across the strategies below.
+  // mtfOfData uses the async chunked variant (byte-identical); RLE/BPE use
+  // offloadTransform — worker-threaded at/above WORKER_OFFLOAD_MIN_SIZE so a
+  // multi-MB allocation-heavy pass never stalls the loop (still byte-identical
+  // to the sync functions either way). All five fire concurrently.
+  let mtfOfData: Buffer | undefined;
+  try {
+    mtfOfData = await mtfEncodeAsync(data);
+  } catch { /* skip */ }
+  const [rleOfData, bpeOfData, rleOfDelta, rleOfMtf, bpeOfDelta] = await Promise.all([
+    offloadTransform('rleEncode', rleEncode, data),
+    offloadTransform('bpeEncode', bpeEncode, data),
+    deltaOfData ? offloadTransform('rleEncode', rleEncode, deltaOfData) : Promise.resolve(undefined),
+    mtfOfData ? offloadTransform('rleEncode', rleEncode, mtfOfData) : Promise.resolve(undefined),
+    deltaOfData ? offloadTransform('bpeEncode', bpeEncode, deltaOfData) : Promise.resolve(undefined),
+  ]);
+  // Strategy 7 (double-pass) reuses c0's output (see sync version).
+  const firstPass = c0 && c0.length > 64 ? c0 : undefined;
+
+  // Fire every remaining Brotli/Zstd compression concurrently. Craft-Codec is
+  // omitted here — it is offloaded and handled inline after the batch.
+  const jobs: Array<{ strategy: number; name: string; data: Buffer; p: Promise<Buffer> }> = [];
+  if (mtfOfData) jobs.push({ strategy: 2, name: 'MTF + Brotli', data: mtfOfData, p: brotliCompressAsync(mtfOfData) });
+  jobs.push({ strategy: 3, name: 'RLE + Brotli', data: rleOfData, p: brotliCompressAsync(rleOfData) });
+  jobs.push({ strategy: 4, name: 'BPE + Brotli', data: bpeOfData, p: brotliCompressAsync(bpeOfData) });
+  if (deltaOfData && rleOfDelta) jobs.push({ strategy: 6, name: 'Delta + RLE + Brotli', data: rleOfDelta, p: brotliCompressAsync(rleOfDelta) });
+  if (firstPass) jobs.push({ strategy: 7, name: 'Double-pass Brotli', data: c0 as Buffer, p: brotliCompressAsync(c0 as Buffer) });
+  if (mtfOfData && rleOfMtf) jobs.push({ strategy: 8, name: 'MTF + RLE + Brotli', data: rleOfMtf, p: brotliCompressAsync(rleOfMtf) });
+  if (deltaOfData && bpeOfDelta) jobs.push({ strategy: 9, name: 'Delta + BPE + Brotli', data: bpeOfDelta, p: brotliCompressAsync(bpeOfDelta) });
+  jobs.push({ strategy: 10, name: 'Zstd L22', data, p: zstdCompressAsync(data) });
+  if (deltaOfData) jobs.push({ strategy: 11, name: 'Delta + Zstd', data: deltaOfData, p: zstdCompressAsync(deltaOfData) });
+
+  const settled = await Promise.allSettled(jobs.map(j => j.p));
+  const byStrategy = new Map<number, { name: string; data: Buffer; compressed: Buffer }>();
+  settled.forEach((s, i) => {
+    if (s.status === 'fulfilled') {
+      byStrategy.set(jobs[i].strategy, { name: jobs[i].name, data: jobs[i].data, compressed: s.value });
+    }
+  });
+
+  const pushAttempt = (strategy: CompressionStrategy, name: string, data: Buffer, compressed: Buffer) => {
+    results.push({ strategy, name, data, compressed });
+  };
+
+  if (byStrategy.has(2)) { const r = byStrategy.get(2)!; pushAttempt(2, r.name, r.data, r.compressed); }
+  if (byStrategy.has(3)) { const r = byStrategy.get(3)!; pushAttempt(3, r.name, r.data, r.compressed); }
+  if (byStrategy.has(4)) { const r = byStrategy.get(4)!; pushAttempt(4, r.name, r.data, r.compressed); }
+  if (byStrategy.has(6)) { const r = byStrategy.get(6)!; pushAttempt(6, r.name, r.data, r.compressed); }
+
+  // Strategy 7 is only useful if the second pass is smaller (mirrors sync).
+  if (byStrategy.has(7) && c0) {
+    const r = byStrategy.get(7)!;
+    if (r.compressed.length < c0.length) pushAttempt(7, r.name, r.data, r.compressed);
+  }
+
+  if (byStrategy.has(8)) { const r = byStrategy.get(8)!; pushAttempt(8, r.name, r.data, r.compressed); }
+  if (byStrategy.has(9)) { const r = byStrategy.get(9)!; pushAttempt(9, r.name, r.data, r.compressed); }
+  if (byStrategy.has(10)) { const r = byStrategy.get(10)!; pushAttempt(10, r.name, r.data, r.compressed); }
+  if (byStrategy.has(11)) { const r = byStrategy.get(11)!; pushAttempt(11, r.name, r.data, r.compressed); }
+
+  // Strategy 12: Craft-Codec (offloaded to a worker thread — gated by the
+  // async size cap so compress latency stays predictable).
+  if (data.length <= CRAFT_CODEC_ASYNC_MAX_SIZE) {
+    try {
+      const c12 = await craftCodecCompressAsync(data);
+      results.push({ strategy: 12, name: 'Craft-Codec (order-1)', data, compressed: c12 });
+    } catch { /* skip */ }
+  }
+
+  return results;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────
@@ -648,6 +662,35 @@ export function compress7(data: Buffer): Compress7Result {
     attempts.push({ strategy: 0, name: 'Brotli Q11 (fallback)', data, compressed: fallback });
   }
 
+  return assembleResult(data, attempts);
+}
+
+/**
+ * Async Adaptive Compression — byte-identical to `compress7`, but the
+ * Brotli/Zstd passes run on the libuv threadpool so the event loop stays
+ * responsive (and concurrent calls parallelize across the pool).
+ *
+ * @param data — The raw data to compress
+ * @returns A Promise for the Compress7Result (same shape as `compress7`)
+ */
+export async function compress7Async(data: Buffer): Promise<Compress7Result> {
+  if (data.length === 0) {
+    throw new Error('Cannot compress empty data. Provide non-empty input to Craft.');
+  }
+
+  const attempts = await tryAllStrategiesAsync(data);
+
+  // Safety: if all strategies failed, fall back to raw Brotli
+  if (attempts.length === 0) {
+    const fallback = await brotliCompressAsync(data);
+    attempts.push({ strategy: 0, name: 'Brotli Q11 (fallback)', data, compressed: fallback });
+  }
+
+  return assembleResult(data, attempts);
+}
+
+/** Select the smallest strategy output and build the Compress7Result. */
+function assembleResult(data: Buffer, attempts: StrategyAttempt[]): Compress7Result {
   // Select the strategy with the smallest compressed output
   // Add 1 byte overhead for the strategy ID prefix
   let best = attempts[0];
@@ -755,6 +798,86 @@ export function decompress7(compressed: Buffer): Buffer {
     // Note: strategy 12 (Craft-Codec) is handled by the early return above,
     // before this switch — it never uses Brotli/Zstd decompression, so it
     // can't appear here (and TypeScript's control-flow narrowing agrees).
+
+    default:
+      throw new Error(`Unknown compression strategy: ${strategy}`);
+  }
+}
+
+/**
+ * Async Adaptive Decompression — byte-identical to `decompress7`, but the
+ * Brotli/Zstd decode runs on the libuv threadpool and the Craft-Codec
+ * (strategy 12) / RLE / BPE steps run in worker threads at/above
+ * WORKER_OFFLOAD_MIN_SIZE, so a large restore never stalls the event loop.
+ *
+ * @param compressed — The compressed data (with strategy prefix)
+ * @returns A Promise for the decompressed buffer (bit-identical to original)
+ */
+export async function decompress7Async(compressed: Buffer): Promise<Buffer> {
+  const strategy = compressed[0] as CompressionStrategy;
+  const payload = compressed.subarray(1);
+
+  // Strategy 12 uses its own self-contained codec (length header + range
+  // coder), not Brotli or Zstd — handle it before the shared decompression
+  // step, offloaded so restoring a large legacy sync-engine payload can't
+  // stall the loop.
+  if (strategy === 12) {
+    return craftCodecDecompressAsync(payload);
+  }
+
+  // Step 1: Decompress with the codec this strategy actually used.
+  let data: Buffer;
+  if (strategy === 10 || strategy === 11) {
+    data = await zstdDecompressAsync(payload);
+  } else {
+    data = await brotliDecompressAsync(payload);
+  }
+
+  // Step 2: Apply inverse pre-processing based on strategy (same as sync).
+  // RLE/BPE decodes offload at/above WORKER_OFFLOAD_MIN_SIZE (byte-identical);
+  // delta/MTF decodes are ~1GB/s single-pass and stay on the main thread.
+  switch (strategy) {
+    case 0: // Raw Brotli — no pre-processing was applied
+      return data;
+
+    case 1: // Delta + Brotli → inverse: Brotli decode, then delta decode
+      return deltaDecode(data);
+
+    case 2: // MTF + Brotli → inverse: Brotli decode, then MTF decode
+      return mtfDecode(data);
+
+    case 3: // RLE + Brotli → inverse: Brotli decode, then RLE decode
+      return offloadTransform('rleDecode', rleDecode, data);
+
+    case 4: // BPE + Brotli → inverse: Brotli decode, then BPE decode
+      return offloadTransform('bpeDecode', bpeDecode, data);
+
+    case 5: // Delta + MTF + Brotli → inverse: Brotli decode, then MTF decode, then delta decode
+      const mtfResult5 = mtfDecode(data);
+      return deltaDecode(mtfResult5);
+
+    case 6: // Delta + RLE + Brotli → inverse: Brotli decode, then RLE decode, then delta decode
+      const rleResult6 = await offloadTransform('rleDecode', rleDecode, data);
+      return deltaDecode(rleResult6);
+
+    case 7: // Double-pass Brotli → inverse: decompress twice
+      return brotliDecompressAsync(data);
+
+    case 8: // MTF + RLE + Brotli → inverse: Brotli decode, then RLE decode, then MTF decode
+      const rleResult8 = await offloadTransform('rleDecode', rleDecode, data);
+      return mtfDecode(rleResult8);
+
+    case 9: // Delta + BPE + Brotli → inverse: Brotli decode, then BPE decode, then delta decode
+      const bpeResult9 = await offloadTransform('bpeDecode', bpeDecode, data);
+      return deltaDecode(bpeResult9);
+
+    case 10: // Raw Zstd — no pre-processing was applied
+      return data;
+
+    case 11: // Delta + Zstd → inverse: Zstd decode, then delta decode
+      return deltaDecode(data);
+
+    // Note: strategy 12 (Craft-Codec) is handled by the early return above.
 
     default:
       throw new Error(`Unknown compression strategy: ${strategy}`);

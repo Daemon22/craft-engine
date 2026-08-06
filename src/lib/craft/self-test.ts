@@ -37,7 +37,7 @@ function checkZstdAvailable(): boolean {
   }
 }
 
-export function selfTest(): SelfTestResult {
+export async function selfTest(): Promise<SelfTestResult> {
   const start = Date.now();
   const passphrase = 'craft-self-test-passphrase-00';
   const checkedStrategies: string[] = [];
@@ -56,8 +56,8 @@ export function selfTest(): SelfTestResult {
   // Fixture 1: plain text, exercises the base pipeline (Brotli path at minimum).
   try {
     const data = Buffer.from('CRAFT self-test fixture. '.repeat(100));
-    const packed = nano(data, 'selftest.txt', 'text/plain', passphrase);
-    const restored = macro(packed.buffer, passphrase);
+    const packed = await nano(data, 'selftest.txt', 'text/plain', passphrase);
+    const restored = await macro(packed.buffer, passphrase);
     if (!restored.buffer.equals(data) || !restored.integrityVerified) {
       throw new Error('base round-trip mismatch');
     }
@@ -80,8 +80,8 @@ export function selfTest(): SelfTestResult {
       data[i] = b;
       prev = b;
     }
-    const packed = nano(data, 'selftest2.bin', 'application/octet-stream', passphrase);
-    const restored = macro(packed.buffer, passphrase);
+    const packed = await nano(data, 'selftest2.bin', 'application/octet-stream', passphrase);
+    const restored = await macro(packed.buffer, passphrase);
     if (!restored.buffer.equals(data) || !restored.integrityVerified) {
       throw new Error('order-1-favorable round-trip mismatch');
     }
@@ -97,8 +97,8 @@ export function selfTest(): SelfTestResult {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { randomBytes } = require('crypto');
     const data: Buffer = randomBytes(20_000);
-    const packed = nano(data, 'selftest3.bin', 'application/octet-stream', passphrase);
-    const restored = macro(packed.buffer, passphrase);
+    const packed = await nano(data, 'selftest3.bin', 'application/octet-stream', passphrase);
+    const restored = await macro(packed.buffer, passphrase);
     if (!restored.buffer.equals(data) || !restored.integrityVerified) {
       throw new Error('random-binary round-trip mismatch');
     }

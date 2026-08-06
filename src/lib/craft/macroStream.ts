@@ -33,7 +33,7 @@ import {
   METADATA_ENCRYPTED_FLAG,
   METADATA_LENGTH_MASK,
 } from './types';
-import { decryptMetadata } from './codec';
+import { decryptMetadataAsync } from './codec';
 import {
   STREAM_VERSION,
   CRYPTO_OVERHEAD,
@@ -42,7 +42,7 @@ import {
   MacroStreamOptions,
   MacroStreamResult,
   decryptChunkSync,
-  decompressChunk,
+  decompressChunkAsync,
   deriveDataKey,
   readMagicVersion,
   resolveStreamMetaEncryption,
@@ -139,7 +139,7 @@ function isLegacy(version: number): boolean {
  * If `passphrase` is supplied, the encrypted metadata is decrypted and the full
  * metadata is returned.
  */
-export function peekStreamMetadata(craftBuffer: Buffer, passphrase?: string): StreamMetadata {
+export async function peekStreamMetadata(craftBuffer: Buffer, passphrase?: string): Promise<StreamMetadata> {
   const { version } = readMagicVersion(craftBuffer);
   if (version !== STREAM_VERSION) {
     throw new Error(`peekStreamMetadata: not a v4 (streaming) package (version=${version}).`);
@@ -188,7 +188,7 @@ export function peekStreamMetadata(craftBuffer: Buffer, passphrase?: string): St
   const encryptedMeta = view.subarray(offset, offset + encMetaLen); offset += encMetaLen;
   let decrypted: Buffer;
   try {
-    decrypted = decryptMetadata(encryptedMeta, passphrase, metaSalt, metaIv, metaAuthTag);
+    decrypted = await decryptMetadataAsync(encryptedMeta, passphrase, metaSalt, metaIv, metaAuthTag);
   } catch {
     throw new Error('Metadata decryption failed — the passphrase is incorrect.');
   }
@@ -241,7 +241,7 @@ export async function macroStream(
   if (Buffer.isBuffer(input)) {
     const { version } = readMagicVersion(input);
     if (isLegacy(version)) {
-      const res = macro(input, passphrase);
+      const res = await macro(input, passphrase);
       return {
         buffer: res.buffer,
         metadata: res.metadata,
@@ -259,7 +259,7 @@ export async function macroStream(
     const { version } = await peekVersion(input);
     if (isLegacy(version)) {
       const full = fs.readFileSync(input);
-      const res = macro(full, passphrase);
+      const res = await macro(full, passphrase);
       return {
         buffer: res.buffer,
         metadata: res.metadata,
@@ -280,7 +280,7 @@ export async function macroStream(
   if (isLegacy(version)) {
     const rest = await drainToBuffer(input);
     const full = Buffer.concat([head, rest]);
-    const res = macro(full, passphrase);
+    const res = await macro(full, passphrase);
     return {
       buffer: res.buffer,
       metadata: res.metadata,
@@ -314,7 +314,7 @@ async function decodeV4(
   const { metadata, dataSalt, chunkCount, chunkSize, originalSize } = header;
   const strategy: 'zstd' | 'brotli' = (metadata.compressionStrategyKey as 'zstd' | 'brotli') ?? 'zstd';
 
-  const dataKey = deriveDataKey(passphrase, dataSalt); // throws only internal
+  const dataKey = await deriveDataKey(passphrase, dataSalt); // throws only internal
 
   // ── Output sink ──
   const verifyOnly = !!opts.verifyOnly;
@@ -367,7 +367,8 @@ async function decodeV4(
 
       let chunkBytes: Buffer;
       try {
-        chunkBytes = decompressChunk(compressed, strategy);
+        // Async chunk codec — decode runs on the libuv threadpool.
+        chunkBytes = await decompressChunkAsync(compressed, strategy);
       } catch {
         throw new Error(`Integrity failure: chunk #${i} decompression failed (corrupt compressed payload).`);
       }
@@ -450,7 +451,7 @@ async function parseV4Header(read: ByteReader, passphrase: string): Promise<{
   const encryptedMeta = await read(encMetaLen);
   let decrypted: Buffer;
   try {
-    decrypted = decryptMetadata(encryptedMeta, passphrase, metaSalt, metaIv, metaAuthTag);
+    decrypted = await decryptMetadataAsync(encryptedMeta, passphrase, metaSalt, metaIv, metaAuthTag);
   } catch (e: unknown) {
     throw new Error(`Metadata decryption failed — the passphrase is incorrect. (${e instanceof Error ? e.message : String(e)})`);
   }

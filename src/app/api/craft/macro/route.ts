@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const craftBuffer = Buffer.from(arrayBuffer);
 
-    const result = macro(craftBuffer, passphrase);
+    const result = await macro(craftBuffer, passphrase);
 
     const processingTime = Math.round(performance.now() - startTime);
 

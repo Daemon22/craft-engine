@@ -78,16 +78,18 @@ describe('performance: compression speed', () => {
 });
 
 describe('performance: encryption speed', () => {
-  test('encrypt 1KB < 200ms', () => {
+  test('encrypt 1KB < 500ms', () => {
     const data = Buffer.alloc(1024, 0xDE);
     const { ms } = measureTime(() => encrypt(data, PASS));
-    expect(ms).toBeLessThan(200); // PBKDF2 with 600K iterations is inherently slow
+    // PBKDF2 with 600K iterations dominates (≈280ms measured on a mid-range
+    // Windows machine) — 500ms gives headroom while still catching regressions.
+    expect(ms).toBeLessThan(500);
   });
 
-  test('encrypt 100KB < 200ms', () => {
+  test('encrypt 100KB < 500ms', () => {
     const data = Buffer.alloc(100 * 1024, 0xEF);
     const { ms } = measureTime(() => encrypt(data, PASS));
-    expect(ms).toBeLessThan(200);
+    expect(ms).toBeLessThan(500);
   });
 
   test('decrypt is similar speed to encrypt', () => {
@@ -103,38 +105,43 @@ describe('performance: encryption speed', () => {
 });
 
 describe('performance: nano/macro roundtrip', () => {
-  test('nano+macro roundtrip 1KB < 200ms', () => {
+  test('nano+macro roundtrip 1KB < 4000ms', async () => {
     const data = Buffer.alloc(1024, 0x12);
-    let pkg: any;
-    let restored: any;
 
-    const nanoMs = measureTime(() => { pkg = nano(data, 'f.bin', 'application/octet-stream', PASS); }).ms;
-    const macroMs = measureTime(() => { restored = macro(pkg.buffer, PASS); }).ms;
+    const pkgResult = await measureTimeAsync(() => nano(data, 'f.bin', 'application/octet-stream', PASS));
+    const pkg = pkgResult.result;
+    const nanoMs = pkgResult.ms;
+    const restoredResult = await measureTimeAsync(() => macro(pkg.buffer, PASS));
+    const restored = restoredResult.result;
+    const macroMs = restoredResult.ms;
 
     expect(restored.buffer).toEqual(data);
-    expect(nanoMs + macroMs).toBeLessThan(1000); // Relaxed threshold for CI environments
+    // nano() does 2 PBKDF2-600k derivations (data+metadata keys derived once,
+    // then the built-in self-verify reuses those exact keys via macroWithKeys)
+    // ≈ 0.9s measured on a mid-range machine here. 4s keeps the guard
+    // meaningful while tolerating slower CI runners.
+    expect(nanoMs + macroMs).toBeLessThan(4000);
   });
 
-  test('nano+macro roundtrip 100KB < 5s', () => {
+  test('nano+macro roundtrip 100KB < 5s', async () => {
     const data = Buffer.alloc(100 * 1024, 0x34);
-    let pkg: any;
     let restored: any;
 
-    const totalMs = measureTime(() => {
-      pkg = nano(data, 'f.bin', 'application/octet-stream', PASS);
-      restored = macro(pkg.buffer, PASS);
-    }).ms;
+    const totalMs = (await measureTimeAsync(async () => {
+      const pkg = await nano(data, 'f.bin', 'application/octet-stream', PASS);
+      restored = await macro(pkg.buffer, PASS);
+    })).ms;
 
     expect(restored.buffer).toEqual(data);
     expect(totalMs).toBeLessThan(30000); // 30s for 100KB with all strategies
   });
 
-  test('nano scales roughly linearly for text data (100x size ≈ <100x time)', () => {
+  test('nano scales roughly linearly for text data (100x size ≈ <100x time)', async () => {
     const smallData = Buffer.from('linear scale test '.repeat(10)); // ~200 bytes
     const largeData = Buffer.from('linear scale test '.repeat(1000)); // ~20 KB
 
-    const smallTime = measureTime(() => nano(smallData, 'f.txt', 'text/plain', PASS)).ms;
-    const largeTime = measureTime(() => nano(largeData, 'f.txt', 'text/plain', PASS)).ms;
+    const smallTime = (await measureTimeAsync(() => nano(smallData, 'f.txt', 'text/plain', PASS))).ms;
+    const largeTime = (await measureTimeAsync(() => nano(largeData, 'f.txt', 'text/plain', PASS))).ms;
 
     // Large should be slower but not 100x slower (compression helps)
     // This is a sanity check, not a strict bound
@@ -181,9 +188,9 @@ describe('performance: memory efficiency', () => {
     expect(overheadRatio).toBeLessThan(2);
   });
 
-  test('nano package size is reasonable for small files', () => {
+  test('nano package size is reasonable for small files', async () => {
     const data = Buffer.from('small file content');
-    const pkg = nano(data, 'small.txt', 'text/plain', PASS);
+    const pkg = await nano(data, 'small.txt', 'text/plain', PASS);
     // Package should be under 1KB for 19 bytes of content
     // (encryption adds IV, salt, authTag, metadata)
     expect(pkg.buffer.length).toBeLessThan(1024);

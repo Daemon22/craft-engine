@@ -85,8 +85,8 @@ describe('nanoStream / macroStream (v4 chunked streaming)', () => {
     });
 
     test(`identical restored bytes vs gold-standard nano()/macro() (${name})`, async () => {
-      const pkg = nano(data, `${name}.bin`, 'application/octet-stream', PASS);
-      const goldRestored = macro(pkg.buffer, PASS);
+      const pkg = await nano(data, `${name}.bin`, 'application/octet-stream', PASS);
+      const goldRestored = await macro(pkg.buffer, PASS);
       expect(goldRestored.integrityVerified).toBe(true);
       expect(goldRestored.buffer.equals(data)).toBe(true);
 
@@ -109,7 +109,7 @@ describe('nanoStream / macroStream (v4 chunked streaming)', () => {
 
   test('macroStream reads v1-v3 archives (universal reader) by delegating to macro()', async () => {
     const data = fixtures.text;
-    const pkg = nano(data, 'text.bin', 'text/plain', PASS); // v3
+    const pkg = await nano(data, 'text.bin', 'text/plain', PASS); // v3
     const restored = await macroStream(pkg.buffer, PASS);
     expect(restored.integrityVerified).toBe(true);
     expect((restored.buffer as Buffer).equals(data)).toBe(true);
@@ -152,7 +152,7 @@ describe('nanoStream / macroStream (v4 chunked streaming)', () => {
     const data = fixtures.text;
     const out = tmpFile('peek');
     await nanoStream(bufToStream(data), 'text.bin', 'text/plain', PASS, { output: out, verify: false, chunkSize: 4096 });
-    const meta = peekStreamMetadata(fs.readFileSync(out));
+    const meta = await peekStreamMetadata(fs.readFileSync(out));
     expect(meta.version).toBe(STREAM_VERSION);
     expect(meta.originalSize).toBe(data.length);
     expect(meta.chunkCount).toBeGreaterThan(0);
@@ -163,7 +163,7 @@ describe('nanoStream / macroStream (v4 chunked streaming)', () => {
     expect(meta.originalChecksum).toBe('[encrypted]');
 
     // With the passphrase, the full metadata is decryptable.
-    const full = peekStreamMetadata(fs.readFileSync(out), PASS);
+    const full = await peekStreamMetadata(fs.readFileSync(out), PASS);
     expect(full.originalName).toBe('text.bin');
     expect(full.originalMime).toBe('text/plain');
     expect(full.originalChecksum).toBe(sha256(data));
@@ -195,7 +195,7 @@ describe('v4 streaming security & corruption detection', () => {
 
   test('wrong passphrase on a v1-v3 archive still delegates correctly', async () => {
     const data = fixtures.tiny;
-    const pkg = nano(data, 'tiny.bin', 'application/octet-stream', PASS);
+    const pkg = await nano(data, 'tiny.bin', 'application/octet-stream', PASS);
     await expect(macroStream(pkg.buffer, 'wrong-passphrase-12')).rejects.toThrow(/passphrase/i);
   });
 
@@ -235,7 +235,7 @@ describe('v4 streaming security & corruption detection', () => {
       level: 19,
       chunkSize: 8192,
     });
-    const meta = peekStreamMetadata(fs.readFileSync(out), PASS);
+    const meta = await peekStreamMetadata(fs.readFileSync(out), PASS);
     expect(meta.compressionStrategyKey).toBe('zstd');
     const restored = await macroStream(out, PASS);
     expect(restored.integrityVerified).toBe(true);
@@ -252,7 +252,7 @@ describe('v4 streaming security & corruption detection', () => {
       chunkSize: 4096,
       verify: false,
     });
-    const meta = peekStreamMetadata(fs.readFileSync(out), PASS);
+    const meta = await peekStreamMetadata(fs.readFileSync(out), PASS);
     expect(meta.compressionStrategyKey).toBe('brotli');
     const restored = await macroStream(out, PASS);
     expect(restored.integrityVerified).toBe(true);

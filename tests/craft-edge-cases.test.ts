@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { nano, macro, peekMetadata } from '../src/lib/craft/index';
 import { compress, decompress, encrypt, decrypt, deriveKey } from '../src/lib/craft/codec';
-import { compress7, decompress7 } from '../src/lib/craft/compress7';
+import { compress7, decompress7, compress7Async, decompress7Async } from '../src/lib/craft/compress7';
 import { checksum, verify } from '../src/lib/craft/integrity';
 import {
   computeFixityRecord,
@@ -25,217 +25,217 @@ import { CRAFT_MAGIC, CRAFT_VERSION, SALT_LENGTH, IV_LENGTH, AES_KEY_LENGTH, PBK
 const PASS = 'edge-case-test-passphrase-123';
 
 describe('edge cases: minimal inputs', () => {
-  test('single byte roundtrip', () => {
+  test('single byte roundtrip', async () => {
     const data = Buffer.from([0x42]);
-    const pkg = nano(data, 'single.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'single.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
     expect(restored.integrityVerified).toBe(true);
   });
 
-  test('two bytes roundtrip', () => {
+  test('two bytes roundtrip', async () => {
     const data = Buffer.from([0x00, 0xFF]);
-    const pkg = nano(data, 'double.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'double.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('exactly 1KB roundtrip', () => {
+  test('exactly 1KB roundtrip', async () => {
     const data = Buffer.alloc(1024, 0xAB);
-    const pkg = nano(data, '1k.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, '1k.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('exactly 1MB roundtrip', () => {
+  test('exactly 1MB roundtrip', async () => {
     const data = Buffer.alloc(1024 * 1024, 0xCD);
-    const pkg = nano(data, '1mb.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, '1mb.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
     expect(restored.integrityVerified).toBe(true);
   });
 
-  test('odd length buffer (17 bytes)', () => {
+  test('odd length buffer (17 bytes)', async () => {
     const data = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
-    const pkg = nano(data, 'odd.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'odd.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('prime number size (9973 bytes)', () => {
+  test('prime number size (9973 bytes)', async () => {
     const data = Buffer.alloc(9973, 0x5A);
-    const pkg = nano(data, 'prime.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'prime.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 });
 
 describe('edge cases: special byte patterns', () => {
-  test('all zeros', () => {
+  test('all zeros', async () => {
     const data = Buffer.alloc(4096, 0x00);
-    const pkg = nano(data, 'zeros.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'zeros.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('all 0xFF', () => {
+  test('all 0xFF', async () => {
     const data = Buffer.alloc(4096, 0xFF);
-    const pkg = nano(data, 'ff.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'ff.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('alternating bytes (0xAA 0x55)', () => {
+  test('alternating bytes (0xAA 0x55)', async () => {
     const data = Buffer.alloc(4096);
     for (let i = 0; i < data.length; i++) {
       data[i] = i % 2 === 0 ? 0xAA : 0x55;
     }
-    const pkg = nano(data, 'alt.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'alt.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('ascending byte sequence (0x00-0xFF repeating)', () => {
+  test('ascending byte sequence (0x00-0xFF repeating)', async () => {
     const data = Buffer.alloc(256 * 4);
     for (let i = 0; i < data.length; i++) {
       data[i] = i % 256;
     }
-    const pkg = nano(data, 'asc.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'asc.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('descending byte sequence', () => {
+  test('descending byte sequence', async () => {
     const data = Buffer.alloc(256 * 4);
     for (let i = 0; i < data.length; i++) {
       data[i] = 255 - (i % 256);
     }
-    const pkg = nano(data, 'desc.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'desc.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('null bytes embedded in data', () => {
+  test('null bytes embedded in data', async () => {
     const data = Buffer.from('hello\0world\0test\0');
-    const pkg = nano(data, 'nulls.bin', 'application/octet-stream', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'nulls.bin', 'application/octet-stream', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 });
 
 describe('edge cases: filename handling', () => {
-  test('very long filename (255 chars)', () => {
+  test('very long filename (255 chars)', async () => {
     const longName = 'a'.repeat(255) + '.txt';
     const data = Buffer.from('long filename test');
-    const pkg = nano(data, longName, 'text/plain', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, longName, 'text/plain', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
     expect(restored.metadata.originalName).toBe(longName);
   });
 
-  test('filename with special characters', () => {
+  test('filename with special characters', async () => {
     const specialName = "file-with.special&chars[1](2).txt";
     const data = Buffer.from('special chars');
-    const pkg = nano(data, specialName, 'text/plain', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, specialName, 'text/plain', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.metadata.originalName).toBe(specialName);
   });
 
-  test('filename with spaces', () => {
+  test('filename with spaces', async () => {
     const spacedName = 'my important document.txt';
     const data = Buffer.from('spaces in name');
-    const pkg = nano(data, spacedName, 'text/plain', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, spacedName, 'text/plain', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.metadata.originalName).toBe(spacedName);
   });
 
-  test('filename with unicode characters', () => {
+  test('filename with unicode characters', async () => {
     const unicodeName = '文档-文件-🎉.txt';
     const data = Buffer.from('unicode filename');
-    const pkg = nano(data, unicodeName, 'text/plain', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, unicodeName, 'text/plain', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.metadata.originalName).toBe(unicodeName);
   });
 
-  test('extensionless filename', () => {
+  test('extensionless filename', async () => {
     const noExt = 'README';
     const data = Buffer.from('no extension');
-    const pkg = nano(data, noExt, 'text/plain', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, noExt, 'text/plain', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.metadata.originalName).toBe(noExt);
   });
 
-  test('dotfile (hidden file)', () => {
+  test('dotfile (hidden file)', async () => {
     const dotFile = '.env.secret';
     const data = Buffer.from('hidden file');
-    const pkg = nano(data, dotFile, 'application/x-env', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, dotFile, 'application/x-env', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.metadata.originalName).toBe(dotFile);
   });
 });
 
 describe('edge cases: MIME types', () => {
-  test('empty MIME type string', () => {
+  test('empty MIME type string', async () => {
     const data = Buffer.from('no mime');
     // Should handle empty or minimal MIME types gracefully
-    const pkg = nano(data, 'f.txt', '', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'f.txt', '', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('custom/vendor MIME type', () => {
+  test('custom/vendor MIME type', async () => {
     const data = Buffer.from('custom type');
-    const pkg = nano(data, 'data.craft', 'application/x-craft-package', PASS);
-    const restored = macro(pkg.buffer, PASS);
+    const pkg = await nano(data, 'data.craft', 'application/x-craft-package', PASS);
+    const restored = await macro(pkg.buffer, PASS);
     expect(restored.buffer).toEqual(data);
     expect(restored.metadata.originalMime).toBe('application/x-craft-package');
   });
 });
 
 describe('edge cases: passphrase variations', () => {
-  test('exactly 12 character passphrase (minimum)', () => {
+  test('exactly 12 character passphrase (minimum)', async () => {
     const data = Buffer.from('min length');
     const pass12 = '123456789012'; // exactly 12 chars (minimum)
-    const pkg = nano(data, 'f.bin', 'application/octet-stream', pass12);
-    const restored = macro(pkg.buffer, pass12);
+    const pkg = await nano(data, 'f.bin', 'application/octet-stream', pass12);
+    const restored = await macro(pkg.buffer, pass12);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('11 character passphrase is rejected', () => {
+  test('11 character passphrase is rejected', async () => {
     const data = Buffer.from('too short');
     const pass11 = '12345678901'; // 11 chars - too short
-    expect(() => nano(data, 'f.bin', 'application/octet-stream', pass11)).toThrow(/passphrase/i);
+    await expect(nano(data, 'f.bin', 'application/octet-stream', pass11)).rejects.toThrow(/passphrase/i);
   });
 
-  test('very long passphrase (1000 chars)', () => {
+  test('very long passphrase (1000 chars)', async () => {
     const data = Buffer.from('long pass');
     const longPass = 'a'.repeat(1000);
-    const pkg = nano(data, 'f.bin', 'application/octet-stream', longPass);
-    const restored = macro(pkg.buffer, longPass);
+    const pkg = await nano(data, 'f.bin', 'application/octet-stream', longPass);
+    const restored = await macro(pkg.buffer, longPass);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('passphrase with unicode', () => {
+  test('passphrase with unicode', async () => {
     const data = Buffer.from('unicode pass');
     const unicodePass = '密码-パスワード-mot de passe-🔑';
-    const pkg = nano(data, 'f.bin', 'application/octet-stream', unicodePass);
-    const restored = macro(pkg.buffer, unicodePass);
+    const pkg = await nano(data, 'f.bin', 'application/octet-stream', unicodePass);
+    const restored = await macro(pkg.buffer, unicodePass);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('passphrase with only special characters', () => {
+  test('passphrase with only special characters', async () => {
     const data = Buffer.from('special pass');
     const specialPass = '!@#$%^&*()_+-=[]{}|;:,.<>?';
-    const pkg = nano(data, 'f.bin', 'application/octet-stream', specialPass);
-    const restored = macro(pkg.buffer, specialPass);
+    const pkg = await nano(data, 'f.bin', 'application/octet-stream', specialPass);
+    const restored = await macro(pkg.buffer, specialPass);
     expect(restored.buffer).toEqual(data);
   });
 
-  test('passphrase with newlines and tabs (if allowed)', () => {
+  test('passphrase with newlines and tabs (if allowed)', async () => {
     const data = Buffer.from('whitespace pass');
     const wsPass = 'pass\twith\nwhitespace';
-    const pkg = nano(data, 'f.bin', 'application/octet-stream', wsPass);
-    const restored = macro(pkg.buffer, wsPass);
+    const pkg = await nano(data, 'f.bin', 'application/octet-stream', wsPass);
+    const restored = await macro(pkg.buffer, wsPass);
     expect(restored.buffer).toEqual(data);
   });
 });
@@ -265,6 +265,55 @@ describe('edge cases: compress7 boundaries', () => {
     expect(decompressed).toEqual(data);
     // Should achieve excellent compression ratio
     expect(result.compressedSize).toBeLessThan(data.length / 10);
+  });
+});
+
+describe('edge cases: async compress7 engine (compress7Async/decompress7Async)', () => {
+  test('async round-trip restores the original for varied inputs', async () => {
+    const inputs = [
+      Buffer.alloc(10000, 0x41), // single repeated byte
+      Buffer.from('The async compress7 engine is byte-identical to the sync one. '.repeat(80)),
+      Buffer.from([0, 1, 2, 3, 4, 5, 254, 255, 1, 2, 3, 4, 5, 6, 7, 8]), // sparse/edge bytes
+      Buffer.alloc(300 * 1024, 0x4C), // > craft-codec async gate (128KB) — exercises the skip path
+    ];
+    for (const data of inputs) {
+      const result = await compress7Async(data);
+      const restored = await decompress7Async(result.data);
+      expect(restored).toEqual(data);
+    }
+  });
+
+  test('async output is byte-identical to the sync engine for Brotli strategies; cross-decodable for all', async () => {
+    const inputs = [
+      Buffer.alloc(8000, 0x42), // 'B' repeated — likely a Zstd (10/11) winner
+      Buffer.from(JSON.stringify({ hello: 'world', nested: { a: [1, 2, 3], b: true } }).repeat(60)), // text — Brotli-leaning
+      Buffer.from('async vs sync engine consistency check. '.repeat(40)), // short text
+      Buffer.alloc(300 * 1024, 0x4C), // 300KB — exercises chunked delta/MTF transforms + craft-codec skip
+    ];
+    for (const data of inputs) {
+      const syncResult = compress7(data);
+      const asyncResult = await compress7Async(data);
+
+      // Brotli strategies (0-9) are deterministic across sync/async → must be
+      // byte-identical. Zstd frames (10, 11) are also deterministic and valid,
+      // but Node's async zstd can emit a slightly different frame header, so
+      // for those we assert the compatibility invariant instead (below).
+      if (syncResult.strategy < 10 && asyncResult.strategy < 10) {
+        expect(asyncResult.data).toEqual(syncResult.data);
+        expect(asyncResult.strategy).toBe(syncResult.strategy);
+        expect(asyncResult.strategyName).toBe(syncResult.strategyName);
+      }
+
+      // The critical invariant holds for EVERY strategy: either engine's output
+      // must decode back to the exact original through the other engine too.
+      expect(await decompress7Async(syncResult.data)).toEqual(data);
+      expect(decompress7(asyncResult.data)).toEqual(data);
+      expect(await decompress7Async(asyncResult.data)).toEqual(data);
+    }
+  });
+
+  test('async engine throws on empty input', async () => {
+    await expect(compress7Async(Buffer.alloc(0))).rejects.toThrow();
   });
 });
 
@@ -375,9 +424,9 @@ describe('edge cases: encryption/decryption', () => {
 });
 
 describe('edge cases: peekMetadata robustness', () => {
-  test('peekMetadata returns correct structure', () => {
+  test('peekMetadata returns correct structure', async () => {
     const data = Buffer.from('meta test');
-    const pkg = nano(data, 'peek.txt', 'text/plain', PASS);
+    const pkg = await nano(data, 'peek.txt', 'text/plain', PASS);
     const meta = peekMetadata(pkg.buffer);
 
     expect(meta).toHaveProperty('originalName');
@@ -387,9 +436,9 @@ describe('edge cases: peekMetadata robustness', () => {
     expect(meta).toHaveProperty('compressionMode');
   });
 
-  test('peekMetadata on encrypted package redacts name', () => {
+  test('peekMetadata on encrypted package redacts name', async () => {
     const data = Buffer.from('secret');
-    const pkg = nano(data, 'secret-name.txt', 'text/plain', PASS);
+    const pkg = await nano(data, 'secret-name.txt', 'text/plain', PASS);
     const meta = peekMetadata(pkg.buffer);
     // Encrypted metadata should show [encrypted] or similar
     if (meta.originalName !== 'secret-name.txt') {
@@ -397,9 +446,9 @@ describe('edge cases: peekMetadata robustness', () => {
     }
   });
 
-  test('peekMetadata on plaintext metadata shows name', () => {
+  test('peekMetadata on plaintext metadata shows name', async () => {
     const data = Buffer.from('public');
-    const pkg = nano(data, 'public-name.txt', 'text/plain', PASS, { encryptMetadata: false });
+    const pkg = await nano(data, 'public-name.txt', 'text/plain', PASS, { encryptMetadata: false });
     const meta = peekMetadata(pkg.buffer);
     expect(meta.originalName).toBe('public-name.txt');
   });

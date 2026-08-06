@@ -48,7 +48,9 @@ export {
 export type { FixityRecord, FixityCheckResult } from './fixity';
 
 // 7-Fold Compression Engine
-export { compress7, decompress7 } from './compress7';
+// compress7Async/decompress7Async run the Brotli/Zstd passes on the libuv
+// threadpool; the sync variants are retained for legacy/sync callers.
+export { compress7, decompress7, compress7Async, decompress7Async } from './compress7';
 export type { Compress7Result, CompressionStrategy } from './compress7';
 
 // Codec Layer

@@ -36,16 +36,16 @@ const GOLDEN_PACKAGE_BASE64 =
   'QjEpPHBWopjxGuSXNeLE5YzWYP5ElZS8hkP/e54rRDOf2';
 
 describe('lib/craft: golden backward-compatibility fixture', () => {
-  test('a previously-encoded package still decodes correctly with the current code', () => {
+  test('a previously-encoded package still decodes correctly with the current code', async () => {
     const packageBuffer = Buffer.from(GOLDEN_PACKAGE_BASE64, 'base64');
-    const result = macro(packageBuffer, GOLDEN_PASSPHRASE);
+    const result = await macro(packageBuffer, GOLDEN_PASSPHRASE);
     expect(result.buffer.toString('utf-8')).toBe(GOLDEN_ORIGINAL_TEXT);
     expect(result.integrityVerified).toBe(true);
     expect(result.metadata.originalName).toBe('golden.txt');
   });
 
-  test('wrong passphrase against the golden fixture still fails safely', () => {
+  test('wrong passphrase against the golden fixture still fails safely', async () => {
     const packageBuffer = Buffer.from(GOLDEN_PACKAGE_BASE64, 'base64');
-    expect(() => macro(packageBuffer, 'definitely-the-wrong-passphrase')).toThrow();
+    await expect(macro(packageBuffer, 'definitely-the-wrong-passphrase')).rejects.toThrow();
   });
 });
