@@ -469,7 +469,7 @@ export function decompress7(compressed: Buffer): Buffer {
   const payload = compressed.subarray(1);
 
   // Step 1: Brotli decompress
-  let data = brotliDecompressSync(payload);
+  const data = brotliDecompressSync(payload);
 
   // Step 2: Apply inverse pre-processing based on strategy
   switch (strategy) {

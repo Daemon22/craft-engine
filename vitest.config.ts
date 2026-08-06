@@ -46,9 +46,6 @@ export default defineConfig({
     // Isolate tests for consistent behavior
     isolate: true,
 
-    // Show progress for large test suites
-    reportVerbose: true,
-
     // Setup files (if needed in future)
     // setupFiles: ['./tests/setup.ts'],
   },

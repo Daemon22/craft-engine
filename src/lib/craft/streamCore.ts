@@ -232,8 +232,8 @@ export function decryptChunkSync(
  *  but scoped to the streaming path so a future multi-strategy v4 stays
  *  self-describing per chunk. Currently only `0` is emitted (single archive
  *  strategy, recorded in metadata). */
-export const STREAM_STRATEGY_BROTLI: 0 = 0;
-export const STREAM_STRATEGY_ZSTD: 1 = 1;
+export const STREAM_STRATEGY_BROTLI = 0 as const;
+export const STREAM_STRATEGY_ZSTD = 1 as const;
 
 export function strategyIdToName(id: number): string {
   return id === STREAM_STRATEGY_ZSTD ? 'Zstd' : 'Brotli';
@@ -318,10 +318,9 @@ export async function readExact(
   stream: NodeJS.ReadableStream,
   n: number,
 ): Promise<Buffer> {
-  let chunks: Buffer[] = [];
+  const chunks: Buffer[] = [];
   let total = 0;
-  let eof = false;
-  while (total < n && !eof) {
+  let eof = false;  while (total < n && !eof) {
     // Drain whatever is synchronously available from the internal buffer.
     let part: Buffer | null;
     while ((part = stream.read(n - total) as Buffer | null) !== null) {

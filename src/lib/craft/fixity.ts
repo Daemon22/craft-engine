@@ -97,17 +97,17 @@ export function parseFixityRecord(text: string): FixityRecord {
   } catch {
     throw new Error('Fixity record is not valid JSON — the sidecar file may be corrupted or truncated.');
   }
+  const record = parsed as Record<string, unknown>;
   if (
     typeof parsed !== 'object' || parsed === null ||
-    typeof (parsed as any).sha256 !== 'string' ||
-    typeof (parsed as any).size !== 'number' ||
-    typeof (parsed as any).recordedAt !== 'string'
+    typeof record.sha256 !== 'string' ||
+    typeof record.size !== 'number' ||
+    typeof record.recordedAt !== 'string'
   ) {
     throw new Error('Fixity record is missing required fields — the sidecar file may be corrupted or from an incompatible version.');
   }
   // Default `algorithm` for records written before the field existed, so
   // older sidecars still type-check and compare correctly.
-  const record = (parsed as Record<string, unknown>);
   if (record.algorithm === undefined) record.algorithm = 'sha256';
   return record as unknown as FixityRecord;
 }

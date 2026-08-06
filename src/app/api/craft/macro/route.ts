@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
     const processingTime = Math.round(performance.now() - startTime);
 
-    return new NextResponse(result.buffer, {
+    return new NextResponse(new Uint8Array(result.buffer), {
       status: 200,
       headers: {
         ...CORS_HEADERS,

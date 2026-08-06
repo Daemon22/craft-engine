@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
       ? JSON.stringify(result.strategyBenchmarks)
       : '';
 
-    return new NextResponse(result.buffer, {
+    return new NextResponse(new Uint8Array(result.buffer), {
       status: 200,
       headers: {
         ...CORS_HEADERS,

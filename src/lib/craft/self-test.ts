@@ -29,7 +29,7 @@ export interface SelfTestResult {
 
 function checkZstdAvailable(): boolean {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const zlib = require('zlib');
     return typeof zlib.zstdCompressSync === 'function';
   } catch {
@@ -94,7 +94,7 @@ export function selfTest(): SelfTestResult {
   // Fixture 3: incompressible random binary — confirms the pipeline degrades
   // safely (round-trips correctly, doesn't crash) even when nothing compresses.
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { randomBytes } = require('crypto');
     const data: Buffer = randomBytes(20_000);
     const packed = nano(data, 'selftest3.bin', 'application/octet-stream', passphrase);
