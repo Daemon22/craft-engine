@@ -28,6 +28,30 @@ import {
   AUTH_TAG_LENGTH,
   METADATA_ENCRYPTED_FLAG,
 } from './types';
+import {
+  validateCredentialKey,
+  credentialKeySecret,
+} from './credentials';
+
+/**
+ * Resolve the effective encryption secret (the PBKDF2 input) from either a
+ * passphrase or a credential key. A credential key is pre-hashed with a
+ * domain-separation prefix before reaching PBKDF2 (see credentials.ts).
+ */
+function resolveSecret(
+  passphrase: string,
+  options?: NanoOptions,
+): string {
+  if (options?.credentialKey) {
+    const v = validateCredentialKey(options.credentialKey);
+    if (!v.valid) throw new Error(v.errors.join(' '));
+    return credentialKeySecret(options.credentialKey);
+  }
+  if (!passphrase || passphrase.length < 12) {
+    throw new Error('Passphrase must be at least 12 characters for secure encryption.');
+  }
+  return passphrase;
+}
 
 /**
  * Execute the Nano pipeline with 7-fold adaptive compression.
@@ -35,7 +59,7 @@ import {
  * @param data — The raw input data to craft
  * @param originalName — Original filename for metadata
  * @param originalMime — Original MIME type for metadata
- * @param passphrase — Encryption passphrase
+ * @param passphrase — Encryption passphrase (or empty when options.credentialKey is set)
  * @param options — Optional compression/encryption settings
  * @returns NanoResult with the .craft buffer and operation stats
  */
@@ -50,12 +74,17 @@ export async function nano(
   if (!Buffer.isBuffer(data) || data.length === 0) {
     throw new Error('Cannot craft empty data. Provide non-empty input to Craft Nano.');
   }
-  if (!passphrase || passphrase.length < 12) {
+  if (options?.credentialKey) {
+    const v = validateCredentialKey(options.credentialKey);
+    if (!v.valid) throw new Error(v.errors.join(' '));
+  } else if (!passphrase || passphrase.length < 12) {
     throw new Error('Passphrase must be at least 12 characters for secure encryption.');
   }
   if (!originalName || originalName.trim().length === 0) {
     throw new Error('Original filename is required for package metadata.');
   }
+
+  const secret = resolveSecret(passphrase, options);
 
   // Fold 1: Compute integrity checksum
   const originalChecksum = checksum(data);
@@ -83,7 +112,7 @@ export async function nano(
   // The package stores the salts, so macro() reproduces the exact same keys
   // from the passphrase — the format and security parameters are unchanged;
   // only the redundant re-derivations are removed (4 → 2 for nano()).
-  const { key: dataKey, salt } = await deriveKeyAsync(passphrase);
+  const { key: dataKey, salt } = await deriveKeyAsync(secret);
   const { encrypted, iv, authTag } = encryptWithKey(compressed, dataKey, salt);
 
   // Determine if metadata should be encrypted (default: true)
@@ -111,7 +140,7 @@ export async function nano(
   let metaKey: Buffer | undefined;
   let metaSalt: Buffer | undefined;
   if (shouldEncryptMetadata) {
-    const metaKeyResult = await deriveKeyAsync(passphrase);
+    const metaKeyResult = await deriveKeyAsync(secret);
     metaKey = metaKeyResult.key;
     metaSalt = metaKeyResult.salt;
   }

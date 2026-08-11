@@ -16,7 +16,7 @@
 
 // Primary Operations
 export { nano } from './nano';
-export { macro, peekMetadata } from './macro';
+export { macro, peekMetadata, macroWithKeys } from './macro';
 
 // Streaming path (v4 — constant-memory, second execution path).
 // See docs/streaming-architecture.md and docs/chunk-format.md.
@@ -53,12 +53,92 @@ export type { FixityRecord, FixityCheckResult } from './fixity';
 export { compress7, decompress7, compress7Async, decompress7Async } from './compress7';
 export type { Compress7Result, CompressionStrategy } from './compress7';
 
-// Codec Layer
-export { compress, decompress, encrypt, decrypt, deriveKey } from './codec';
-export type { EncryptResult } from './codec';
+// Codec Layer — sync + async crypto (encrypt/decrypt support optional AAD)
+export {
+  compress,
+  decompress,
+  encrypt,
+  encryptAsync,
+  encryptWithKey,
+  decrypt,
+  decryptAsync,
+  decryptWithKey,
+  deriveKey,
+  deriveKeyAsync,
+  encryptMetadata,
+  encryptMetadataAsync,
+  encryptMetadataWithKey,
+  decryptMetadata,
+  decryptMetadataAsync,
+  decryptMetadataWithKey,
+} from './codec';
+export type { EncryptResult, MetadataEncryptResult } from './codec';
 
 // Integrity Layer
 export { checksum, verify } from './integrity';
+
+// Credential Keys — 7-char alternative to a passphrase (max 3× per char)
+export {
+  CREDENTIAL_KEY_LENGTH,
+  CREDENTIAL_MAX_REPEAT,
+  CREDENTIAL_VALUES,
+  CREDENTIAL_SPECIALS,
+  CREDENTIAL_ALPHABET,
+  isValueChar,
+  isSpecialChar,
+  validateCredentialKey,
+  generateCredentialKey,
+  rateCredentialKey,
+  countValidKeys,
+  credentialKeyEntropy,
+  credentialKeySecret,
+  credentialKey,
+  newCredentialKey,
+} from './credentials';
+export type {
+  CredentialCounts,
+  CredentialValidation,
+  CredentialStrength,
+  CredentialRating,
+  CredentialEntropy,
+  CredentialKeyInput,
+} from './credentials';
+
+// Device Passkeys — fingerprint/face unlock (WebAuthn) as an alternative
+export {
+  toBase64Url,
+  fromBase64Url,
+  decodeCBOR,
+  generateRegistrationOptions,
+  generateAuthenticationOptions,
+  parseAuthenticatorData,
+  coseKeyToPem,
+  verifyRegistrationResponse,
+  verifyAuthenticationResponse,
+  PasskeyVault,
+} from './passkeys';
+export type {
+  RelyingPartyConfig,
+  RegistrationOptions,
+  AuthenticationOptions,
+  StoredPasskey,
+  RegistrationResponse,
+  AuthenticationResponse,
+  AuthenticatorData,
+  VerifiedRegistration,
+  VerifiedAuthentication,
+  PasskeyVaultData,
+  PasskeyVaultConfig,
+} from './passkeys';
+export { COSE_ALG, COSE_KTY, COSE_CRV, AUTH_FLAGS } from './passkeys';
+
+// Archive (multi-file) support
+export { archive, extract, peekArchiveMetadata } from './archive';
+export type { ArchiveEntry, ArchiveResult, ExtractResult } from './archive';
+
+// Compression Analytics
+export { CompressionAnalytics, globalAnalytics } from './analytics';
+export type { CompressionObservation, StrategyStats, AnalyticsReport } from './analytics';
 
 // Types
 export type {
@@ -71,6 +151,7 @@ export type {
 export {
   CRAFT_MAGIC,
   CRAFT_VERSION,
+  CRAFT_ARCHIVE_VERSION,
   SALT_LENGTH,
   IV_LENGTH,
   AUTH_TAG_LENGTH,

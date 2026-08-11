@@ -38,6 +38,9 @@ export const CRAFT_MAGIC = Buffer.from('CRAFT1');
 /** Current CRAFT format version (v3 = 7-fold compression + explicit metadata-encrypted flag) */
 export const CRAFT_VERSION = 3;
 
+/** CRAFT archive format version (v3 = multi-file archive, metadata as AAD) */
+export const CRAFT_ARCHIVE_VERSION = 3;
+
 /** Bit 31 of the ML (metadata length) field: explicit "metadata is encrypted" flag (v3+) */
 export const METADATA_ENCRYPTED_FLAG = 0x80000000;
 
@@ -127,6 +130,13 @@ export interface NanoOptions {
   compressionMode?: CompressionMode;
   /** Encryption algorithm (default: 'aes-256-gcm') */
   encryptionAlgo?: EncryptionAlgo;
+  /**
+   * 7-character credential key to encrypt with instead of a passphrase.
+   * When set, the `passphrase` argument may be left empty. The key must
+   * satisfy the credential rules (see credentials.ts): exactly 7 chars,
+   * each character repeated at most 3 times (values and specials alike).
+   */
+  credentialKey?: string;
   /** Whether to encrypt the metadata (default: true for filename privacy) */
   encryptMetadata?: boolean;
   /**

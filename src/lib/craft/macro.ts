@@ -29,6 +29,11 @@ import {
   METADATA_ENCRYPTED_FLAG,
   METADATA_LENGTH_MASK,
 } from './types';
+import {
+  validateCredentialKey,
+  credentialKeySecret,
+  CredentialKeyInput,
+} from './credentials';
 
 /** Minimum supported CRAFT version */
 const MIN_VERSION = 1;
@@ -54,7 +59,7 @@ const CRYPTO_OVERHEAD = SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH;
  * in the ML field (see resolveMetadataEncryption below) — this function
  * exists only to keep reading older v1/v2 packages that already used it.
  */
-function isMetadataPlaintext(craftBuffer: Buffer, offset: number, metadataLength: number): boolean {
+function isMetadataPlaintext(craftBuffer: Buffer, offset: number): boolean {
   if (offset >= craftBuffer.length) return false;
   const firstByte = craftBuffer[offset];
   return firstByte === 0x7B; // '{'
@@ -81,7 +86,7 @@ function resolveMetadataEncryption(
     };
   }
   return {
-    isEncrypted: !isMetadataPlaintext(craftBuffer, offset, rawMetadataLength),
+    isEncrypted: !isMetadataPlaintext(craftBuffer, offset),
     metadataLength: rawMetadataLength,
   };
 }
@@ -361,21 +366,35 @@ async function finishMacro(metadata: CraftMetadata, compressed: Buffer): Promise
  * Also automatically detects encrypted vs plaintext metadata.
  *
  * @param craftBuffer — The .craft package buffer
- * @param passphrase — Decryption passphrase
+ * @param secret — Decryption secret: a passphrase string, or a credential
+ *                 key input ({ type: 'credentialKey', value }) as the
+ *                 alternative unlock mechanism
  * @returns MacroResult with the restored data and verification status
  */
 export async function macro(
   craftBuffer: Buffer,
-  passphrase: string,
+  secret: string | CredentialKeyInput,
 ): Promise<MacroResult> {
   // Input validation
   assertValidCraftPackage(craftBuffer);
-  if (!passphrase || passphrase.length === 0) {
-    throw new Error('Passphrase is required for Macro extraction.');
+
+  const isCredentialKey = typeof secret === 'object' && secret !== null && secret.type === 'credentialKey';
+  if (isCredentialKey) {
+    const v = validateCredentialKey((secret as CredentialKeyInput).value);
+    if (!v.valid) throw new Error(v.errors.join(' '));
+  } else if (typeof secret !== 'string') {
+    throw new Error('A passphrase or credential key is required for Macro extraction.');
   }
-  if (passphrase.length < 12) {
-    throw new Error('Passphrase must be at least 12 characters for secure decryption.');
+  if (!isCredentialKey && typeof secret === 'string') {
+    if (secret.length === 0) {
+      throw new Error('Passphrase is required for Macro extraction.');
+    }
+    if (secret.length < 12) {
+      throw new Error('Passphrase must be at least 12 characters for secure decryption.');
+    }
   }
+
+  const secretInput = isCredentialKey ? credentialKeySecret((secret as CredentialKeyInput).value) : (secret as string);
 
   // Step 1: Parse the .craft package (structure + validation, no decryption)
   const pkg = parsePackage(craftBuffer);
@@ -384,13 +403,13 @@ export async function macro(
   // their own random salt, so each requires its own PBKDF2 derivation.
   let metadata: CraftMetadata;
   if (pkg.metadataEncrypted) {
-    const { key: metaKey } = await deriveKeyAsync(passphrase, pkg.metaSalt as Buffer);
+    const { key: metaKey } = await deriveKeyAsync(secretInput, pkg.metaSalt as Buffer);
     metadata = decryptMetadataSection(pkg, metaKey);
   } else {
     metadata = pkg.metadata as CraftMetadata;
   }
 
-  const { key: dataKey } = await deriveKeyAsync(passphrase, pkg.salt);
+  const { key: dataKey } = await deriveKeyAsync(secretInput, pkg.salt);
   const compressed = decryptWithKey(pkg.encrypted, dataKey, pkg.iv, pkg.authTag);
 
   // Step 3: Decompress + verify integrity

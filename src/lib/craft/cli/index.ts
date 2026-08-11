@@ -13,6 +13,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as http from 'http';
+import { exec } from 'child_process';
 import { nano } from '../nano';
 import { macro, peekMetadata } from '../macro';
 import { compress7 } from '../compress7';
@@ -26,6 +28,27 @@ import {
   parseFixityRecord,
   fixitySidecarPath,
 } from '../fixity';
+import {
+  generateCredentialKey,
+  validateCredentialKey,
+  rateCredentialKey,
+  credentialKeyEntropy,
+  credentialKey,
+  CredentialKeyInput,
+} from '../credentials';
+import {
+  generateRegistrationOptions,
+  generateAuthenticationOptions,
+  verifyRegistrationResponse,
+  verifyAuthenticationResponse,
+  PasskeyVault,
+  PasskeyVaultConfig,
+  RelyingPartyConfig,
+  RegistrationResponse,
+  AuthenticationResponse,
+  RegistrationOptions as CraftRegistrationOptions,
+  AuthenticationOptions as CraftAuthenticationOptions,
+} from '../passkeys';
 
 // ─── Streaming path (v4, constant-memory second execution path) ─────────
 import { nanoStream } from '../nanoStream';
@@ -86,6 +109,192 @@ function safeWriteFile(outPath: string, data: Buffer, force: boolean): void {
 }
 function error(message: string) { console.error(`${colors.red}${colors.bold}  ✗${colors.reset} ${message}`); }
 function info(message: string) { console.log(`${colors.teal}  →${colors.reset} ${colors.dim}${message}${colors.reset}`); }
+
+// ─── Credential key + device passkey helpers ────────────────────────────
+
+function displayCredentialKeyStrength(key: string) {
+  const { score, rating, total } = rateCredentialKey(key);
+  const { keyBits, spaceBits } = credentialKeyEntropy(key);
+  const color =
+    rating === 'Fortress' ? colors.emerald
+    : rating === 'Strong' ? colors.teal
+    : rating === 'Standard' ? colors.yellow
+    : colors.amber;
+  const bar = '█'.repeat(score) + '░'.repeat(total - score);
+  success(`Credential key strength: ${color}${bar}${colors.reset} ${color}${rating}${colors.reset} (${keyBits} bits/key · ${spaceBits} bits space)`);
+}
+
+function vaultConfigFromArgs(opts: Record<string, string | boolean>): PasskeyVaultConfig | null {
+  const vault = typeof opts.vault === 'string' ? opts.vault : undefined;
+  if (!vault) return null;
+  return { vaultPath: vault, vaultKeyPath: vault + '.key' };
+}
+
+function ensureVault(cfg: PasskeyVaultConfig): PasskeyVault {
+  if (!fs.existsSync(cfg.vaultPath) || !fs.existsSync(cfg.vaultKeyPath)) {
+    PasskeyVault.init(cfg);
+    info(`Initialized passkey vault at ${cfg.vaultPath}`);
+  }
+  return new PasskeyVault(cfg);
+}
+
+/**
+ * Open the default browser on a local page that performs the WebAuthn
+ * biometric prompt (fingerprint / face) and POSTs the credential back.
+ * The page is served from http://localhost:<port>, so the relying-party
+ * origin is only known after the server binds — hence the `buildOptions`
+ * factory. Resolves with { response, options, rp }.
+ */
+function browserWebAuthnRoundtrip(
+  mode: 'create' | 'get',
+  buildOptions: (origin: string) => {
+    options: CraftRegistrationOptions | CraftAuthenticationOptions;
+    rp: RelyingPartyConfig;
+  },
+): Promise<{
+  response: RegistrationResponse | AuthenticationResponse;
+  options: CraftRegistrationOptions | CraftAuthenticationOptions;
+  rp: RelyingPartyConfig;
+}> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    let resolved = false;
+    const done = (
+      err: Error | null,
+      value?: {
+        response: RegistrationResponse | AuthenticationResponse;
+        options: CraftRegistrationOptions | CraftAuthenticationOptions;
+        rp: RelyingPartyConfig;
+      },
+    ) => {
+      if (resolved) return;
+      resolved = true;
+      try { server.close(); } catch { /* already closed */ }
+      if (err) reject(err); else resolve(value!);
+    };
+
+    server.on('request', (req, res) => {
+      if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(html);
+        return;
+      }
+      if (req.url === '/result' && req.method === 'POST') {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          let payload: unknown;
+          try { payload = JSON.parse(body); } catch { done(new Error('Malformed passkey response from browser.')); return; }
+          const record = payload as Partial<RegistrationResponse & AuthenticationResponse> & { error?: string };
+          if (record && record.error) {
+            done(new Error(`Passkey ${mode} failed in the browser: ${record.error}`));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end('ok');
+          done(null, {
+            response: record as RegistrationResponse | AuthenticationResponse,
+            options: currentOptions as CraftRegistrationOptions | CraftAuthenticationOptions,
+            rp: currentRp as RelyingPartyConfig,
+          });
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    let html = '<!doctype html>';
+    let currentOptions: CraftRegistrationOptions | CraftAuthenticationOptions | null = null;
+    let currentRp: RelyingPartyConfig | null = null;
+
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = address && typeof address === 'object' ? address.port : 8765;
+      const origin = `http://localhost:${port}`;
+      const built = buildOptions(origin);
+      currentOptions = built.options;
+      currentRp = built.rp;
+      html = `
+<!doctype html>
+<html><head><meta charset="utf-8"><title>CRAFT passkey</title></head>
+<body style="font-family:system-ui;text-align:center;padding-top:4rem">
+  <h1>CRAFT passkey ${mode === 'create' ? 'registration' : 'unlock'}</h1>
+  <p>Complete the ${mode === 'create' ? 'fingerprint / face registration' : 'fingerprint / face unlock'} prompt that just appeared, then this window will close.</p>
+  <script id="opts" type="application/json">${JSON.stringify(currentOptions)}</script>
+  <script>
+    (async () => {
+      const opts = JSON.parse(document.getElementById('opts').textContent);
+      try {
+        const credential = await navigator.credentials.${mode}({ publicKey: opts });
+        const result = {
+          id: credential.id,
+          rawId: b64(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: b64(credential.response.clientDataJSON),
+            attestationObject: credential.response.attestationObject ? b64(credential.response.attestationObject) : undefined,
+            authenticatorData: credential.response.authenticatorData ? b64(credential.response.authenticatorData) : undefined,
+            signature: credential.response.signature ? b64(credential.response.signature) : undefined,
+            userHandle: credential.response.userHandle ? b64(credential.response.userHandle) : undefined
+          }
+        };
+        await fetch('/result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(result) });
+        document.body.innerHTML = '<h1 style="color:#2ecc71">Success — you can close this window.</h1>';
+      } catch (err) {
+        await fetch('/result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: String(err) }) });
+        document.body.innerHTML = '<h1 style="color:#e74c3c">Failed: ' + String(err) + '</h1>';
+      }
+    })();
+    function b64(buf) { return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))); }
+  </script>
+</body></html>`;
+
+      const url = `http://localhost:${port}`;
+      info(`Opening browser for passkey ${mode}... ${url}`);
+      const isWin = process.platform === 'win32';
+      const cmd = isWin ? `start "" "${url}"` : `open "${url}"`;
+      exec(cmd, (err) => {
+        if (err) info('Could not open a browser automatically — visit the URL above manually.');
+      });
+      setTimeout(() => { if (!resolved) info('Waiting for the passkey prompt in your browser (up to 60s)...'); }, 2500);
+      setTimeout(() => done(new Error('Passkey prompt timed out after 60s.')), 60_000);
+    });
+  });
+}
+
+/**
+ * Full passkey unlock: browser biometric assertion → verify → release the
+ * wrapped credential key for the chosen label from the vault.
+ */
+async function unlockKeyFromVault(cfg: PasskeyVaultConfig, label: string | undefined): Promise<string> {
+  const vault = ensureVault(cfg);
+  const creds = vault.listCredentials();
+  if (creds.length === 0) {
+    throw new Error(
+      'No passkeys registered in this vault. Register one first:\n' +
+      `  craft passkey register --vault <path> --key <7-char-key> [--label <name>]`,
+    );
+  }
+  const chosen = label ? creds.find((c) => c.label === label) ?? creds[0] : creds[0];
+
+  const rpBase: RelyingPartyConfig = { rpId: 'localhost', rpName: 'CRAFT', origin: '' };
+  const { response, options, rp } = await browserWebAuthnRoundtrip('get', (origin) => ({
+    options: generateAuthenticationOptions(
+      { ...rpBase, origin },
+      [{ id: chosen.credential.id, transports: chosen.credential.transports }],
+    ),
+    rp: { ...rpBase, origin },
+  }));
+  const verified = verifyAuthenticationResponse(
+    response as AuthenticationResponse,
+    options as CraftAuthenticationOptions,
+    chosen.credential,
+    rp,
+  );
+  if (verified.counter > 0) vault.updateCounter(chosen.credential.id, verified.counter);
+  return vault.releaseKey(chosen.label, { verified: true });
+}
 
 // ─── Streaming path (v4) helpers ──────────────────────────────────────────
 
@@ -208,8 +417,21 @@ function getMime(filePath: string): string {
 async function cmdNano(filePath: string, opts: Record<string, string | boolean>) {
   const passphrase = opts.p || opts.passphrase;
   const outputPath = opts.o || opts.output;
-  if (!passphrase || typeof passphrase !== 'string') { error('Passphrase is required. Use -p <passphrase>'); process.exit(1); }
-  if (passphrase.length < 12) {
+  const credentialKeyValue = typeof opts.key === 'string' ? opts.key : undefined;
+  const vaultCfg = vaultConfigFromArgs(opts);
+
+  if (!credentialKeyValue && (typeof passphrase !== 'string' || passphrase.length === 0)) {
+    error('A passphrase (-p <passphrase>) or a credential key (--key <7-char>) is required.');
+    process.exit(1);
+  }
+  if (credentialKeyValue) {
+    const v = validateCredentialKey(credentialKeyValue);
+    if (!v.valid) {
+      error(v.errors.join(' '));
+      process.exit(1);
+    }
+  }
+  if (!credentialKeyValue && typeof passphrase === 'string' && passphrase.length < 12) {
     error(`Passphrase must be at least 12 characters (yours is ${passphrase.length}).`);
     const { rating, filled, total, color } = ratePassphrase(passphrase);
     const bar = '█'.repeat(filled) + '░'.repeat(total - filled);
@@ -221,6 +443,7 @@ async function cmdNano(filePath: string, opts: Record<string, string | boolean>)
   console.log('');
   log('⚙', `${colors.amber}${colors.bold}CRAFT Nano${colors.reset} — 7-Fold Compress & Encrypt`);
   console.log('');
+  if (credentialKeyValue) log('🔑', `Credential key mode (7 chars, max 3× per character)`);
 
   const data = fs.readFileSync(filePath);
   const fileName = path.basename(filePath);
@@ -230,7 +453,11 @@ async function cmdNano(filePath: string, opts: Record<string, string | boolean>)
   info(`Running 7-fold compression strategies...`);
 
   const startTime = performance.now();
-  const result = await nano(data, fileName, mime, passphrase, { compressionMode: '7fold' });
+  const result = await nano(
+    data, fileName, mime,
+    typeof passphrase === 'string' ? passphrase : '',
+    { compressionMode: '7fold', credentialKey: credentialKeyValue },
+  );
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
 
   // Show strategy benchmarks
@@ -260,7 +487,11 @@ async function cmdNano(filePath: string, opts: Record<string, string | boolean>)
     success(`Compression:  [${colors.emerald}${ratioBar}${colors.reset}] ${ratioPct.toFixed(1)}% smaller`);
   }
   success(`Strategy:   ${result.metadata.compressionStrategyName || 'brotli'}`);
-  displayStrengthMeter(passphrase);
+  if (credentialKeyValue) {
+    displayCredentialKeyStrength(credentialKeyValue);
+  } else if (typeof passphrase === 'string') {
+    displayStrengthMeter(passphrase);
+  }
   success(`Completed in ${elapsed}s`);
 
   console.log('');
@@ -274,18 +505,45 @@ async function cmdNano(filePath: string, opts: Record<string, string | boolean>)
   success(`Crafted package saved: ${outPath}`);
   success(`Fixity record saved: ${fixitySidecarPath(outPath)} (for future 'craft verify' checks)`);
   info(`(nano() already self-verified this package decrypts correctly before saving it — see NanoOptions.verify)`);
+
+  if (credentialKeyValue && vaultCfg) {
+    const vault = ensureVault(vaultCfg);
+    const label = typeof opts.label === 'string' ? opts.label : 'default';
+    vault.storeKey(label, credentialKeyValue);
+    success(`Credential key stored in vault ${vaultCfg.vaultPath} under label "${label}" — unlock later with --passkey.`);
+  }
   console.log('');
 }
 
 async function cmdMacro(filePath: string, opts: Record<string, string | boolean>) {
   const passphrase = opts.p || opts.passphrase;
   const outputPath = opts.o || opts.output;
-  if (!passphrase || typeof passphrase !== 'string') { error('Passphrase is required. Use -p <passphrase>'); process.exit(1); }
+  const credentialKeyValue = typeof opts.key === 'string' ? opts.key : undefined;
+  const usePasskey = opts.passkey === true;
+  const vaultCfg = vaultConfigFromArgs(opts);
+
+  if (!credentialKeyValue && !usePasskey && typeof passphrase !== 'string') {
+    error('A passphrase (-p <passphrase>), credential key (--key <7-char>), or --passkey is required.');
+    process.exit(1);
+  }
+  if (credentialKeyValue) {
+    const v = validateCredentialKey(credentialKeyValue);
+    if (!v.valid) {
+      error(v.errors.join(' '));
+      process.exit(1);
+    }
+  }
+  if (usePasskey && !vaultCfg) {
+    error('--passkey requires --vault <path> so the passkey-bound key can be unlocked.');
+    process.exit(1);
+  }
   if (!fs.existsSync(filePath)) { error(`File not found: ${filePath}`); process.exit(1); }
 
   console.log('');
   log('⚙', `${colors.teal}${colors.bold}CRAFT Macro${colors.reset} — Decrypt & Restore`);
   console.log('');
+  if (usePasskey) log('🔐', `Device passkey mode — fingerprint / face unlock`);
+  else if (credentialKeyValue) log('🔑', `Credential key mode (7 chars, max 3× per character)`);
 
   const craftBuffer = fs.readFileSync(filePath);
   info(`Decrypting...`);
@@ -293,7 +551,16 @@ async function cmdMacro(filePath: string, opts: Record<string, string | boolean>
 
   try {
     const startTime = performance.now();
-    const result = await macro(craftBuffer, passphrase);
+
+    let secretInput: string | CredentialKeyInput = passphrase as string;
+    if (usePasskey) {
+      info('Starting device passkey unlock — complete the fingerprint / face prompt...');
+      secretInput = credentialKey(await unlockKeyFromVault(vaultCfg as PasskeyVaultConfig, typeof opts.label === 'string' ? opts.label : undefined));
+    } else if (credentialKeyValue) {
+      secretInput = credentialKey(credentialKeyValue);
+    }
+
+    const result = await macro(craftBuffer, secretInput);
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
     console.log('');
     success(`Original name: ${result.metadata.originalName}`);
@@ -302,7 +569,13 @@ async function cmdMacro(filePath: string, opts: Record<string, string | boolean>
     if (result.metadata.compressionStrategyName) {
       success(`Strategy:      ${result.metadata.compressionStrategyName}`);
     }
-    displayStrengthMeter(passphrase);
+    if (usePasskey) {
+      success(`Unlock method: device passkey (biometric)`);
+    } else if (credentialKeyValue) {
+      displayCredentialKeyStrength(credentialKeyValue);
+    } else if (typeof passphrase === 'string') {
+      displayStrengthMeter(passphrase);
+    }
     success(`Completed in ${elapsed}s`);
 
     console.log('');
@@ -321,7 +594,7 @@ async function cmdMacro(filePath: string, opts: Record<string, string | boolean>
     console.log('');
     if (err instanceof Error) {
       if (err.message.includes('auth tag') || err.message.includes('Unsupported state')) {
-        error('Decryption failed — incorrect passphrase.');
+        error('Decryption failed — incorrect passphrase or credential key.');
       } else { error(err.message); }
     } else { error('Unknown error during Macro extraction.'); }
     process.exit(1);
@@ -436,7 +709,6 @@ async function cmdMacroStream(filePath: string, opts: Record<string, string | bo
 
   const version = peekVersionFromFile(filePath);
   const fileName = path.basename(filePath);
-  const inputDir = path.dirname(path.resolve(filePath));
   const force = opts.force === true || opts.f === true;
   const chunkSize = typeof opts['chunk-size'] === 'string' ? parseInt(opts['chunk-size'], 10) : DEFAULT_STREAM_CHUNK_SIZE;
 
@@ -802,6 +1074,94 @@ function cmdWatch(targetPath: string, opts: Record<string, string | boolean>) {
   process.on('SIGTERM', shutdown);
 }
 
+function cmdKeygen(opts: Record<string, string | boolean>) {
+  const key = generateCredentialKey();
+  const label = typeof opts.label === 'string' ? opts.label : 'default';
+
+  console.log('');
+  log('🔑', `${colors.amber}${colors.bold}CRAFT Keygen${colors.reset} — Credential Key`);
+  console.log('');
+  success(`Your 7-character credential key: ${colors.bold}${colors.magenta}${key}${colors.reset}`);
+  displayCredentialKeyStrength(key);
+  info('Rules: exactly 7 characters; each character may appear at most 3 times');
+  info('(applies to values and special characters alike). Store it safely — it is');
+  info('the only way to restore files crafted with it.');
+  if (typeof opts.vault === 'string') {
+    const cfg = vaultConfigFromArgs(opts) as PasskeyVaultConfig;
+    const vault = ensureVault(cfg);
+    vault.storeKey(label, key);
+    success(`Key stored in vault ${cfg.vaultPath} under label "${label}".`);
+    info(`Register a device passkey to unlock it with fingerprint/face:`);
+    info(`  craft passkey register --vault <path> --label ${label}`);
+  }
+  console.log('');
+}
+
+async function cmdPasskeyRegister(opts: Record<string, string | boolean>) {
+  const cfg = vaultConfigFromArgs(opts);
+  if (!cfg) { error('--vault <path> is required for passkey registration.'); process.exit(1); }
+  const vault = ensureVault(cfg);
+  const label = typeof opts.label === 'string' ? opts.label : 'default';
+  const keyValue = typeof opts.key === 'string' ? opts.key : undefined;
+  if (keyValue) {
+    const v = validateCredentialKey(keyValue);
+    if (!v.valid) { error(v.errors.join(' ')); process.exit(1); }
+  }
+  const key = keyValue ?? generateCredentialKey();
+  const username = process.env.USERNAME || process.env.USER || 'craft-user';
+
+  console.log('');
+  log('🔐', `${colors.teal}${colors.bold}CRAFT Passkey Register${colors.reset} — Bind device biometrics to a credential key`);
+  console.log('');
+
+  const rpBase: RelyingPartyConfig = { rpId: 'localhost', rpName: 'CRAFT', origin: '' };
+  const { response, options, rp } = await browserWebAuthnRoundtrip('create', (origin) => ({
+    options: generateRegistrationOptions({ ...rpBase, origin }, username),
+    rp: { ...rpBase, origin },
+  }));
+
+  const verified = verifyRegistrationResponse(
+    response as RegistrationResponse,
+    options as CraftRegistrationOptions,
+    rp,
+  );
+  vault.storeKey(label, key);
+  vault.bindPasskey(verified.credential, label);
+
+  console.log('');
+  success(`Passkey registered and bound to label "${label}".`);
+  success(`Credential key: ${colors.magenta}${key}${colors.reset}`);
+  info('You can now unlock with: craft macro <file> --passkey --vault <path>');
+  console.log('');
+}
+
+async function cmdPasskeyUnlock(opts: Record<string, string | boolean>) {
+  const cfg = vaultConfigFromArgs(opts);
+  if (!cfg) { error('--vault <path> is required for passkey unlock.'); process.exit(1); }
+
+  console.log('');
+  log('🔐', `${colors.teal}${colors.bold}CRAFT Passkey Unlock${colors.reset} — fingerprint / face`);
+  console.log('');
+
+  const key = await unlockKeyFromVault(cfg, typeof opts.label === 'string' ? opts.label : undefined);
+  console.log('');
+  success('Passkey assertion verified — device unlock succeeded.');
+  displayCredentialKeyStrength(key);
+  info('Use it with: craft macro <file> --key <key>  (or run craft macro <file> --passkey directly)');
+  console.log('');
+}
+
+function cmdVaultInit(opts: Record<string, string | boolean>) {
+  const cfg = vaultConfigFromArgs(opts);
+  if (!cfg) { error('--vault <path> is required.'); process.exit(1); }
+  ensureVault(cfg);
+  console.log('');
+  success(`Passkey vault initialized at ${cfg.vaultPath}`);
+  info('Store keys with: craft passkey register --vault <path> --key <7-char>');
+  info('Unlock later with: craft macro <file> --passkey --vault <path>');
+  console.log('');
+}
+
 function cmdVersion() {
   console.log(`Craft v${CRAFT_VERSION} — 7-Fold Nano/Macro Encryption & Compression Engine`);
   console.log('Brotli Q11 + Delta + MTF + RLE + BPE + Zstd + Craft-Codec + AES-256-GCM + SHA-256');
@@ -841,12 +1201,39 @@ const opts = parseArgs(args.slice(2));
 async function main() {
   switch (command) {
     case 'nano':
-      if (!filePath) { error('Usage: craft nano <file> -p <passphrase> [-o <output>]'); process.exit(1); }
+      if (!filePath) { error('Usage: craft nano <file> -p <passphrase> | --key <7-char> [-o <output>] [--vault <path>]'); process.exit(1); }
       await cmdNano(filePath, opts);
       break;
     case 'macro':
-      if (!filePath) { error('Usage: craft macro <file.craft> -p <passphrase> [-o <output>]'); process.exit(1); }
+      if (!filePath) { error('Usage: craft macro <file.craft> -p <passphrase> | --key <7-char> | --passkey [-o <output>]'); process.exit(1); }
       await cmdMacro(filePath, opts);
+      break;
+    case 'keygen':
+      cmdKeygen(opts);
+      break;
+    case 'passkey': {
+      const sub = args[2];
+      const subOpts = parseArgs(args.slice(3));
+      if (sub === 'register') await cmdPasskeyRegister(subOpts);
+      else if (sub === 'unlock') await cmdPasskeyUnlock(subOpts);
+      else {
+        error('Usage: craft passkey register --vault <path> [--key <7-char>] [--label <name>]');
+        error('       craft passkey unlock   --vault <path> [--label <name>]');
+        process.exit(1);
+      }
+      break;
+    }
+    case 'vault':
+      if (args[2] === 'init') cmdVaultInit(opts);
+      else { error('Usage: craft vault init --vault <path>'); process.exit(1); }
+      break;
+    case 'nano-stream':
+      if (!filePath) { error('Usage: craft nano-stream <file> -p <passphrase> [-o <output>]'); process.exit(1); }
+      await cmdNanoStream(filePath, opts);
+      break;
+    case 'macro-stream':
+      if (!filePath) { error('Usage: craft macro-stream <file.craft> -p <passphrase> [-o <output>]'); process.exit(1); }
+      await cmdMacroStream(filePath, opts);
       break;
     case 'peek':
       if (!filePath) { error('Usage: craft peek <file.craft> [-p <passphrase>]'); process.exit(1); }
@@ -886,6 +1273,13 @@ async function main() {
       console.log('  craft doctor                                           Verify this environment is safe to use');
       console.log('  craft verify <file.craft|dir> [--deep -p <pass>]       One-shot bitrot/corruption check');
       console.log('  craft watch <dir> [--interval 1h] [--log <path>]       Continuously re-verify on a schedule');
+      console.log('  craft keygen [--vault <path>]                          Generate a 7-char credential key');
+      console.log('  craft nano <file> --key <7-char> [--vault <path>]      Craft with a credential key');
+      console.log('  craft macro <file.craft> --key <7-char>                Restore with a credential key');
+      console.log('  craft vault init --vault <path>                        Create a passkey vault');
+      console.log('  craft passkey register --vault <path> --key <7-char>   Bind fingerprint/face to a key');
+      console.log('  craft macro <file.craft> --passkey --vault <path>      Restore with fingerprint/face');
+      console.log('  craft passkey unlock --vault <path>                    Release a key via fingerprint/face');
       console.log('  craft version                                         Show version');
       console.log('');
       break;
