@@ -112,7 +112,7 @@ export async function macro(
   }
 
   // Step 1: Parse the .craft package
-  const { version, metadata, salt, iv, authTag, encrypted } = parsePackage(craftBuffer);
+  const { metadata, salt, iv, authTag, encrypted } = parsePackage(craftBuffer);
 
   // Step 2: Decrypt the compressed data.
   // Metadata JSON is passed as AAD to verify header integrity.
