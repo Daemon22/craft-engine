@@ -35,6 +35,8 @@
     "build:codec": "npm --prefix craft-codec run build",
     "build:lib": "npm run build:codec && tsc -p tsconfig.cjs.json && tsc -p tsconfig.esm.json && tsc -p tsconfig.types.json && node scripts/fix-esm-specifiers.cjs && node scripts/write-esm-package.cjs",
     "prepare": "npm run build:lib",
+    "prepack": "node scripts/prepare-package.cjs",
+    "postpack": "node scripts/restore-package.cjs",
     "prepublishOnly": "npm run build:lib",
     "start": "node .next/standalone/server.js",
     "lint": "eslint .",
@@ -136,7 +138,11 @@
   "files": [
     "dist",
     "src",
+    "craft-codec",
     "README.md",
     "LICENSE"
+  ],
+  "bundledDependencies": [
+    "@manya/craft-codec"
   ]
 }
