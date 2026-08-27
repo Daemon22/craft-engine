@@ -1,0 +1,1 @@
+Temporary CI validation marker. This file is intentionally disposable and exists only to force an independent pull_request CI run against the current Craft Engine main baseline.
