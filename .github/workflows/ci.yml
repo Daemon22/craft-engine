@@ -16,24 +16,23 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: 'npm'
+          node-version: 22.15.0
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Lint
         run: npm run lint
-        continue-on-error: true
 
       - name: Typecheck
         run: npm run typecheck
-        continue-on-error: true
 
       - name: Run tests
         run: npm test
-        continue-on-error: true
 
       - name: Build
         run: npm run build
-        continue-on-error: true
+
+      - name: Verify package exports and CLI
+        run: npm run verify:package

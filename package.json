@@ -32,13 +32,15 @@
     "test": "vitest run",
     "dev": "next dev -p 3000",
     "build": "next build && node scripts/build-standalone.cjs",
-    "build:lib": "tsc -p tsconfig.cjs.json && tsc -p tsconfig.esm.json && tsc -p tsconfig.types.json",
+    "build:codec": "npm --prefix craft-codec run build",
+    "build:lib": "npm run build:codec && tsc -p tsconfig.cjs.json && tsc -p tsconfig.esm.json && tsc -p tsconfig.types.json && node scripts/fix-esm-specifiers.cjs && node scripts/write-esm-package.cjs",
     "prepare": "npm run build:lib",
     "prepublishOnly": "npm run build:lib",
     "start": "node .next/standalone/server.js",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "doctor": "node ./dist/cjs/lib/craft/cli/index.js doctor",
+    "verify:package": "node scripts/verify-package.cjs",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -128,8 +130,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Daemon22/Manya.git",
-    "directory": "packages/craft-engine"
+    "url": "https://github.com/Daemon22/craft-engine.git",
+    "directory": "."
   },
   "files": [
     "dist",
