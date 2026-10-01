@@ -1,0 +1,15 @@
+[Unit]
+Description=Craft Watch - Fixity Monitoring for %I
+After=network.target
+
+[Service]
+Type=simple
+# Replace 'uviwe' with the actual user if necessary
+User=uviwe
+# Replace with the absolute path to your craft-engine directory
+WorkingDirectory=/home/uviwe/craft-engine
+ExecStart=/usr/bin/node bin/craft.js watch %I --interval 1h --log /var/log/craft-watch-%i.log
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

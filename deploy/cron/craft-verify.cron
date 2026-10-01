@@ -1,0 +1,6 @@
+# Craft Verify - Scheduled Bitrot Check
+# Run every day at 3:00 AM
+# Replace /path/to/vault with the directory you want to monitor
+# Replace /path/to/craft-engine with the absolute path to the project
+
+0 3 * * * cd /path/to/craft-engine && /usr/bin/node bin/craft.js verify /path/to/vault --deep -p "your-passphrase" >> /var/log/craft-verify.log 2>&1
