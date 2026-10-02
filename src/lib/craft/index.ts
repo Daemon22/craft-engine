@@ -14,6 +14,9 @@
  *    7. SHA-256 Integrity — lossless verification
  */
 
+// Easy Facade — One-liners for pack/unpack
+export { craft } from './easy';
+
 // Primary Operations
 export { nano } from './nano';
 export { macro, peekMetadata, macroWithKeys } from './macro';
