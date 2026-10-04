@@ -1,6 +1,0 @@
-module loaded
-queue scheduled
-nanoStream(verify:false) ok: bytes 140000 chunks 35 file exists? true
-macroStream(verifyOnly,path) threw: TIMEOUT macroStream-verifyOnly-path after 10000ms
-macroStream(verifyOnly,buf): iv true chunks 35
-nanoStream-full threw: TIMEOUT nanoStream-full after 15000ms
