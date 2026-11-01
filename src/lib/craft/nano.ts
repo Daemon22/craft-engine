@@ -78,7 +78,7 @@ export async function nano(
     compressed = compress(data);
   }
 
-  const { key: dataKey, salt } = await deriveKeyAsync(secret, undefined, features.kdfIterations);
+  const { key: dataKey, salt } = await deriveKeyAsync(secret);
   const { encrypted, iv, authTag } = encryptWithKey(compressed, dataKey, salt);
 
   const metadata: CraftMetadata = {
@@ -96,7 +96,7 @@ export async function nano(
   };
 
   const metadataJson = Buffer.from(JSON.stringify(metadata), 'utf-8');
-  const { key: metaKey, salt: metaKeySalt } = await deriveKeyAsync(secret, undefined, features.kdfIterations);
+  const { key: metaKey, salt: metaKeySalt } = await deriveKeyAsync(secret);
   const metaResult = encryptMetadataWithKey(metadataJson, metaKey, metaKeySalt);
 
   const metaSectionLength = SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH + metaResult.encrypted.length;

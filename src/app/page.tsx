@@ -1,189 +1,83 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Activity, Archive, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, FileArchive, FileUp, Fingerprint, Layers3, LockKeyhole, ShieldCheck, Sparkles, Zap } from 'lucide-react';
 
-export default function Dashboard() {
+type Mode = 'nano' | 'macro';
+
+function Dashboard() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const isDemo = searchParams.get('demo') === 'true';
+  const isDemo = useSearchParams().get('demo') === 'true';
+  const [mode, setMode] = useState<Mode>('nano');
+  const [file, setFile] = useState<File | null>(null);
+  const [passphrase, setPassphrase] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // State for simulated stats
-  const [stats, setStats] = useState({
-    activeCrafts: 12,
-    spaceSaved: '4.2 GB',
-    health: 'Optimal',
-    version: '0.2.0-harden'
-  });
+  useEffect(() => { if (!isDemo) router.replace('/login'); }, [isDemo, router]);
+  if (!isDemo) return null;
 
-  if (!isDemo) {
-    // In a real app, this would check the session
-    // Redirecting to login if not in demo mode
-    useEffect(() => {
-      const timer = setTimeout(() => router.push('/login'), 100);
-      return () => clearTimeout(timer);
-    }, []);
-    return <div style={{ backgroundColor: '#0f172a', minHeight: '100vh' }} />;
+  function changeMode(next: Mode) {
+    setMode(next); setFile(null); setPassphrase(''); setMessage('');
+    if (inputRef.current) inputRef.current.value = '';
   }
 
-  return (
-    <div style={{
-      fontFamily: 'system-ui, sans-serif',
-      backgroundColor: '#0f172a',
-      color: '#f8fafc',
-      minHeight: '100vh',
-      padding: '2rem'
-    }}>
-      {/* Top Header */}
-      <header style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '3rem',
-        borderBottom: '1px solid #1e293b',
-        paddingBottom: '1rem'
-      }}>
-        <div>
-          <h1 style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#38bdf8', margin: 0 }}>CRAFT <span style={{ fontWeight: '300', color: '#94a3b8' }}>Engine</span></h1>
-          <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.2rem' }}>
-            Environment: <span style={{ color: '#10b981' }}>{stats.health}</span> | v{stats.version}
-          </div>
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!file || passphrase.length < 12) return;
+    setBusy(true); setMessage('');
+    try {
+      const data = new FormData(); data.append('file', file); data.append('passphrase', passphrase);
+      const response = await fetch(`/api/craft/${mode}`, { method: 'POST', body: data });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'Something went wrong. Please try again.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const originalName = response.headers.get('X-Craft-Original-Name');
+      let downloadName = file.name.replace(/\.craft$/i, '') || 'restored-file';
+      if (originalName) { try { downloadName = decodeURIComponent(originalName); } catch { /* use fallback */ } }
+      link.href = url; link.download = mode === 'nano' ? `${file.name.endsWith('.craft') ? file.name : `${file.name}.craft`}` : downloadName;
+      link.click(); URL.revokeObjectURL(url);
+      setMessage(mode === 'nano' ? 'Your archive is ready and downloading.' : 'Your file has been restored and is downloading.');
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Something went wrong. Please try again.'); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="app-shell">
+    <aside className="sidebar">
+      <a className="brand" href="/?demo=true"><span className="brand-mark"><Layers3 size={21}/></span><span>craft<span className="brand-light">engine</span><small>ARCHIVE WITH INTENTION</small></span></a>
+      <div className="nav-label">WORKSPACE</div>
+      <nav aria-label="Main navigation"><a className="nav-item active" href="#overview"><Activity size={17}/> Overview <span className="nav-dot"/></a><a className="nav-item" href="#archive"><Archive size={17}/> Archive workspace</a><a className="nav-item" href="#activity"><Fingerprint size={17}/> Integrity activity</a></nav>
+      <div className="sidebar-bottom"><div className="sidebar-note"><ShieldCheck size={19}/><div><strong>Built for peace of mind</strong><p>Every archive is verified for fidelity.</p></div></div><div className="sidebar-version"><span>CRAFT ENGINE</span><span>v0.2.0</span></div></div>
+    </aside>
+    <main className="main" id="overview">
+      <header className="topbar"><div className="breadcrumb">Workspace <span>/</span> <strong>Overview</strong></div><div className="top-right"><span className="demo-pill"><span/> Demo workspace</span><a className="help-link" href="https://github.com/Daemon22/craft-engine" aria-label="Open Craft Engine on GitHub"><CircleHelp size={19}/></a><span className="avatar">AD</span><span className="profile">Azura Daemon<small>Demo account</small></span><ChevronDown size={15} className="muted"/></div></header>
+      <div className="content">
+        <div className="heading-row"><div><div className="eyebrow"><span/> YOUR ARCHIVAL WORKSPACE</div><h1>Good to see you <span>✳</span></h1><p>Everything you need to keep your data safe, in one place.</p></div><span className="system-status"><span/> Demo environment</span></div>
+        <div className="section-heading"><div><h2>Workspace overview</h2><p>A snapshot of your archive activity.</p></div><span className="sample-label">SAMPLE DATA</span></div>
+        <div className="stats-grid">
+          {[{label:'Integrity scans',value:'1,204',note:'Files checked',icon:ShieldCheck,color:'cyan'}, {label:'Space saved',value:'4.2 GB',note:'With adaptive compression',icon:Zap,color:'violet'}, {label:'Active vaults',value:'3',note:'Across your workspace',icon:LockKeyhole,color:'amber'}, {label:'Engine uptime',value:'99.9%',note:'Reliable by design',icon:Activity,color:'green'}].map(({label,value,note,icon:Icon,color})=><div className="stat-card" key={label}><div className="stat-top"><span>{label}</span><span className={`stat-icon ${color}`}><Icon size={17}/></span></div><strong>{value}</strong><small>{note}</small></div>)}
         </div>
-        <div style={{ display: 'flex', gap: '1rem' }}>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>DEMO SESSION</div>
-            <div style={{ fontSize: '0.9rem' }}>Azura Daemon</div>
-          </div>
-          <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#38bdf8', display: 'flex', alignItems: 'center', justifySelf: 'center', fontWeight: 'bold' }}>
-            <span style={{ width: '100%', textAlign: 'center' }}>AD</span>
-          </div>
-        </div>
-      </header>
-
-      {/* Stats Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '3rem' }}>
-        {[
-          { label: 'Integrity Scans', value: '1,204', icon: '🛡️' },
-          { label: 'Adaptive Savings', value: stats.spaceSaved, icon: '📉' },
-          { label: 'Active Vaults', value: '3', icon: '🔐' },
-          { label: 'Uptime', value: '99.9%', icon: '⚡' },
-        ].map((stat, i) => (
-          <div key={i} style={{ backgroundColor: '#1e293b', padding: '1.5rem', borderRadius: '0.75rem', border: '1px solid #334155' }}>
-            <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>{stat.icon}</div>
-            <div style={{ color: '#94a3b8', fontSize: '0.875rem' }}>{stat.label}</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{stat.value}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Main Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '2rem' }}>
-
-        {/* Left Column: Nano & Macro Area */}
-        <section>
-          <div style={{ backgroundColor: '#1e293b', padding: '2rem', borderRadius: '1rem', marginBottom: '2rem', border: '1px solid #334155' }}>
-            <h2 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ color: '#38bdf8' }}>✦</span> Nano Archive Creator
-            </h2>
-            <div style={{
-              border: '2px dashed #334155',
-              borderRadius: '0.75rem',
-              padding: '3rem',
-              textAlign: 'center',
-              cursor: 'pointer',
-              transition: 'border-color 0.2s'
-            }}>
-              <p style={{ color: '#94a3b8' }}>Drag files here or <b>browse</b> to craft a secure archive</p>
-              <div style={{ fontSize: '0.75rem', color: '#475569', marginTop: '1rem' }}>
-                Adaptive 12-strategy compression enabled (Brotli/Zstd/Craft-Codec)
-              </div>
-            </div>
-            <div style={{ marginTop: '1.5rem' }}>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Passphrase (min 12 chars)</label>
-              <input type="password" placeholder="••••••••••••" style={{
-                width: '100%',
-                padding: '0.75rem',
-                backgroundColor: '#0f172a',
-                border: '1px solid #334155',
-                borderRadius: '0.5rem',
-                color: 'white'
-              }} />
-            </div>
-            <button style={{
-              marginTop: '1.5rem',
-              width: '100%',
-              padding: '0.75rem',
-              backgroundColor: '#38bdf8',
-              color: '#0f172a',
-              border: 'none',
-              borderRadius: '0.5rem',
-              fontWeight: 'bold',
-              cursor: 'pointer'
-            }}>CRAFT ARCHIVE</button>
-          </div>
-
-          <div style={{ backgroundColor: '#1e293b', padding: '2rem', borderRadius: '1rem', border: '1px solid #334155' }}>
-            <h2 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ color: '#f59e0b' }}>✦</span> Macro Restoration
-            </h2>
-            <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '1rem' }}>Restore your files from <code>.craft</code> packages with guaranteed integrity.</p>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-               <input type="file" style={{ display: 'none' }} id="restore-file" />
-               <label htmlFor="restore-file" style={{
-                 flex: 1,
-                 padding: '0.75rem',
-                 backgroundColor: '#0f172a',
-                 border: '1px solid #334155',
-                 borderRadius: '0.5rem',
-                 cursor: 'pointer',
-                 textAlign: 'center',
-                 fontSize: '0.9rem'
-               }}>Select .craft file</label>
-               <button style={{
-                 padding: '0.75rem 2rem',
-                 backgroundColor: '#f59e0b',
-                 color: '#0f172a',
-                 border: 'none',
-                 borderRadius: '0.5rem',
-                 fontWeight: 'bold',
-                 cursor: 'pointer'
-               }}>RESTORE</button>
-            </div>
-          </div>
+        <div className="workspace-grid"><section className="panel archive-panel" id="archive"><div className="panel-heading"><div><div className="panel-kicker"><Sparkles size={14}/> THE CRAFT WORKSPACE</div><h2>Make space for what matters.</h2><p>Protect your files with compression and encryption.</p></div><span className="panel-icon"><Archive size={21}/></span></div>
+          <div className="tabs" role="tablist" aria-label="Archive action"><button type="button" role="tab" aria-selected={mode==='nano'} onClick={()=>changeMode('nano')}><FileArchive size={16}/> Create archive</button><button type="button" role="tab" aria-selected={mode==='macro'} onClick={()=>changeMode('macro')}><ArrowDownToLine size={16}/> Restore file</button></div>
+          <form onSubmit={submit}><div className="form-intro"><div><h3>{mode==='nano'?'Create a secure archive':'Restore an archive'}</h3><p>{mode==='nano'?'Choose a file to compress and protect.':'Choose a .craft file and enter its passphrase.'}</p></div><span className="step">{mode==='nano'?'NANO':'MACRO'} MODE</span></div>
+            <label className="dropzone" htmlFor="archive-file" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault(); setFile(e.dataTransfer.files[0] || null); setMessage('');}}><span className="upload-icon"><FileUp size={22}/></span><strong>{file ? file.name : <>Drop your file here, or <span>browse</span></>}</strong><small>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · Click to change file` : mode==='nano'?'Any file type · Maximum 100 MB':'.craft files · Maximum 100 MB'}</small></label>
+            <input ref={inputRef} id="archive-file" className="visually-hidden" type="file" accept={mode==='macro'?'.craft':undefined} onChange={e=>{setFile(e.target.files?.[0] || null); setMessage('');}} required={!file}/>
+            <div className="field-heading"><label htmlFor="passphrase">Passphrase</label><span>Minimum 12 characters</span></div><input id="passphrase" className="password" type="password" placeholder="Enter a strong passphrase" value={passphrase} onChange={e=>setPassphrase(e.target.value)} minLength={12} required autoComplete="off"/>
+            <button className="primary-button" disabled={busy || !file || passphrase.length < 12} type="submit">{busy?'Processing…':mode==='nano'?'Craft secure archive':'Restore file'} <ArrowRight size={17}/></button>{message && <p className="form-message" role="status">{message}</p>}
+          </form><div className="security-note"><ShieldCheck size={16}/> Encrypted with AES-256-GCM <span>•</span> Verified for integrity</div>
         </section>
-
-        {/* Right Column: Engine Stats */}
-        <aside>
-          <div style={{ backgroundColor: '#1e293b', padding: '1.5rem', borderRadius: '1rem', border: '1px solid #334155' }}>
-            <h3 style={{ fontSize: '1rem', marginBottom: '1rem', color: '#94a3b8' }}>Strategy Performance</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {[
-                { name: 'Brotli Q11', usage: 45, color: '#38bdf8' },
-                { name: 'Zstd L22', usage: 32, color: '#10b981' },
-                { name: 'Craft-Codec', usage: 18, color: '#8b5cf6' },
-                { name: 'Other (Delta/RLE)', usage: 5, color: '#f59e0b' }
-              ].map((strat, i) => (
-                <div key={i}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.4rem' }}>
-                    <span>{strat.name}</span>
-                    <span>{strat.usage}%</span>
-                  </div>
-                  <div style={{ height: '6px', backgroundColor: '#0f172a', borderRadius: '3px' }}>
-                    <div style={{ width: `${strat.usage}%`, height: '100%', backgroundColor: strat.color, borderRadius: '3px' }}></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ marginTop: '2rem', padding: '1rem', backgroundColor: '#0f172a', borderRadius: '0.5rem', fontSize: '0.75rem' }}>
-              <div style={{ color: '#64748b', marginBottom: '0.5rem' }}>FIXITY CHECK LOG</div>
-              <div style={{ color: '#10b981' }}>[OK] archive_2026_prod.craft</div>
-              <div style={{ color: '#10b981' }}>[OK] database_backup_v2.craft</div>
-              <div style={{ color: '#38bdf8' }}>[SCANNING] assets_vault.craft...</div>
-            </div>
-          </div>
-        </aside>
+        <aside className="right-column"><section className="panel strategy-panel"><div className="side-heading"><div><h2>Strategy performance</h2><p>Compression methods at work</p></div><span className="mini-badge">DEMO</span></div><div className="strategy-list">{[{name:'Brotli Q11',value:45,color:'blue'}, {name:'Zstd L22',value:32,color:'mint'}, {name:'Craft-Codec',value:18,color:'purple'}, {name:'Other strategies',value:5,color:'gold'}].map(item=><div className="strategy" key={item.name}><div><span><i className={item.color}/>{item.name}</span><strong>{item.value}%</strong></div><div className="track"><span className={item.color} style={{width:`${item.value}%`}}/></div></div>)}</div><div className="strategy-footer"><Sparkles size={15}/><span>Adaptive compression selects the best strategy for your data.</span></div></section>
+          <section className="panel activity-panel" id="activity"><div className="side-heading"><div><h2>Integrity activity</h2><p>Recent sample checks</p></div><Fingerprint size={19} className="muted"/></div><div className="activity-row"><span className="check-icon"><Check size={14}/></span><div><strong>archive_2026_prod.craft</strong><small>Integrity verified</small></div><span className="activity-time">PASSED</span></div><div className="activity-row"><span className="check-icon"><Check size={14}/></span><div><strong>database_backup_v2.craft</strong><small>Integrity verified</small></div><span className="activity-time">PASSED</span></div><div className="activity-row"><span className="scan-icon"><Activity size={14}/></span><div><strong>assets_vault.craft</strong><small>Checking integrity</small></div><span className="activity-time scanning">SCANNING</span></div></section>
+        </aside></div><footer><span>Crafted for data that matters.</span><span>SECURE BY DESIGN <span className="footer-dot">●</span> BUILT FOR FIDELITY</span></footer>
       </div>
-    </div>
-  );
+    </main>
+  </div>;
 }
+
+export default function Page() { return <Suspense><Dashboard /></Suspense>; }
