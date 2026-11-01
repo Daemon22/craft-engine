@@ -43,7 +43,7 @@ export async function nano(
   passphrase: string,
   options?: NanoOptions,
 ): Promise<NanoResult> {
-  const tier = (options as any)?.tier || CraftTier.FREE;
+  const tier = options?.tier || CraftTier.FREE;
   const features = getFeatures(tier);
 
   // 1. Strict File Size Enforcement

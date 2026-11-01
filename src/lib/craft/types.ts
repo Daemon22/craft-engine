@@ -32,6 +32,8 @@
  *  The strategy_id tells decompression which inverse transforms to apply.
  */
 
+import type { CraftTier } from './features';
+
 /** Magic bytes identifying a CRAFT package — "CRAFT1" */
 export const CRAFT_MAGIC = Buffer.from('CRAFT1');
 
@@ -126,6 +128,8 @@ export interface MacroResult {
 
 /** Options for the Nano operation */
 export interface NanoOptions {
+  /** Feature tier (default: FREE); the KDF uses the same fixed policy for all tiers. */
+  tier?: CraftTier;
   /** Compression mode: '7fold' (default) or 'brotli' (legacy) */
   compressionMode?: CompressionMode;
   /** Encryption algorithm (default: 'aes-256-gcm') */

@@ -29,7 +29,10 @@
     ]
   },
   "include": [
+    "next-env.d.ts",
     "src/lib/**/*.ts",
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
     "scripts/**/*.cjs",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
@@ -39,7 +42,6 @@
     "dist",
     "craft-codec",
     "tests",
-    "src/app",
     "src/lib/db.ts"
   ]
 }

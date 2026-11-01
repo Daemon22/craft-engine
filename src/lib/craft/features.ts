@@ -2,6 +2,8 @@
  * CRAFT Feature Manager
  * Strictly manages tiered access and admin capabilities.
  */
+import { PBKDF2_ITERATIONS } from './types';
+
 export enum CraftTier {
   FREE = 'FREE',
   PRO = 'PRO',
@@ -13,7 +15,7 @@ export interface FeatureSet {
   allowStreaming: boolean;  // Constant-memory v4 support
   allowEliteCodec: boolean; // Access to Strategy 12 (craft-codec)
   allowAuditLogs: boolean;  // Signed audit logging for compliance
-  kdfIterations: number;    // Security strength
+  kdfIterations: number;    // Fixed PBKDF2-SHA256 iterations for all tiers
 }
 
 const TIER_CONFIGS: Record<CraftTier, FeatureSet> = {
@@ -22,21 +24,21 @@ const TIER_CONFIGS: Record<CraftTier, FeatureSet> = {
     allowStreaming: false,
     allowEliteCodec: false,
     allowAuditLogs: false,
-    kdfIterations: 100_000
+    kdfIterations: PBKDF2_ITERATIONS
   },
   [CraftTier.PRO]: {
     maxFileSize: 2048,
     allowStreaming: true,
     allowEliteCodec: true,
     allowAuditLogs: true,
-    kdfIterations: 600_000
+    kdfIterations: PBKDF2_ITERATIONS
   },
   [CraftTier.GOV]: {
     maxFileSize: Infinity,
     allowStreaming: true,
     allowEliteCodec: true,
     allowAuditLogs: true,
-    kdfIterations: 1_000_000
+    kdfIterations: PBKDF2_ITERATIONS
   }
 };
 
@@ -48,7 +50,7 @@ export function getFeatures(tier: CraftTier = CraftTier.FREE): FeatureSet {
  * Admin Audit Logger
  * Generates a signed record of a craft operation for gov/enterprise compliance.
  */
-export function logAuditAction(action: string, metadata: any) {
+export function logAuditAction(action: string, metadata: Record<string, unknown>) {
   const timestamp = new Date().toISOString();
   // In a Gov tier, this would be signed with a PGP/HSM key
   console.log(`[AUDIT] ${timestamp} | ${action} | Strategy: ${metadata.strategy} | Status: ${metadata.status}`);
