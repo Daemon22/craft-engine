@@ -39,7 +39,7 @@
     "verify:package": "node scripts/verify-package.cjs",
     "dev": "next dev",
     "build:web": "next build",
-    "build": "npm run build:lib"
+    "build": "npm run build:lib && npm run build:web"
   },
   "dependencies": {
     "@manya/craft-codec": "file:./craft-codec",

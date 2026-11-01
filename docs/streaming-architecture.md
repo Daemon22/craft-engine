@@ -1,11 +1,27 @@
 # CRAFT Streaming Architecture (v4 — Constant-Memory Streaming)
 
-> **Status:** Reference implementation. `nano()` / `macro()` (v1–v3) are the gold
-> standard and are intentionally left **untouched**. This document describes a
-> **second execution path** — `nanoStream()` / `macroStream()` — that adds
-> constant-memory, chunked processing for arbitrarily large files.
->
 > See [`chunk-format.md`](./chunk-format.md) for the exact on-disk layout.
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:bfee9704ca59981bc435d2e423289018b7cce2c83e2f3be0de4618104a6832ce -->
+
+> **Status:** Reference implementation. `nanoStream()` / `macroStream()` provide
+> a second execution path with constant-memory, chunked processing. The
+> single-file reader also supports authenticated v5 archives.
+>
+
+<!-- /coderabbit-ai-generated:v1 -->
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:4a2d820725c52e2101e58e22eb7343f3ec7f6bebabf498a1145464f275b159ad -->
+
+## Single-file v5 compatibility
+
+`nano()` now writes single-file version 5. Its payload AES-GCM tag authenticates the exact magic, version, metadata length and flag, and metadata section as additional authenticated data. Plaintext metadata is still visible before decryption; `peekMetadata()` does not authenticate it. `macro()` authenticates these bytes before returning restored metadata. Version 5 archives require a reader updated for v5; older readers reject them. Current readers continue to restore v1–v3 archives, including plaintext metadata, but legacy plaintext metadata cannot be authenticated. Version 4 remains the distinct streaming format. `macroStream()` delegates v5 to the single-file reader.
+
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ## 1. Goals
 
@@ -111,12 +127,15 @@ file stream ─► header ─► decrypt metadata ─► [ loop: read chunk reco
   `metadata.originalChecksum` **and** the restored byte count is compared to
   `metadata.originalSize` (catches truncation).
 
-### v1–v3 fallback
+<!-- coderabbit-ai-generated:v1 -->
 
-`macroStream` accepts any CRAFT archive: for version 1/2/3 it delegates to the
-unchanged `macro()` (which loads the whole package — as it always did). Only
-v4 archives take the streaming path. This keeps the gold-standard reader
-byte-identical while making the streaming reader universal.
+<!-- coderabbit-ai-generated-section:v1:d193a3bfa6edcebab9e8397abb22d1460431337cd3691c0aa3d02b543aa7f643 -->
+
+### Single-file fallback
+
+For single-file versions 1, 2, 3 and 5, `macroStream` delegates to `macro()`, which loads the whole package. Version 4 takes the streaming path.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ## 6. Security model (unchanged guarantees)
 

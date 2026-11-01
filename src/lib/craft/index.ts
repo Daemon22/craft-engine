@@ -17,6 +17,9 @@
 // Easy Facade — One-liners for pack/unpack
 export { craft } from './easy';
 
+export { CraftTier } from './features';
+export type { CraftTierValue } from './features';
+
 // Primary Operations
 export { nano } from './nano';
 export { macro, peekMetadata, macroWithKeys } from './macro';

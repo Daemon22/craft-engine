@@ -69,7 +69,7 @@ describe('lib/craft: metadata detection (regression)', () => {
       encryptionAlgo: 'aes-256-gcm',
       originalChecksum: checksum(data),
       createdAt: new Date().toISOString(),
-      version: CRAFT_VERSION,
+      version: 3,
       metadataEncrypted: true,
     }), 'utf-8');
 
@@ -90,7 +90,7 @@ describe('lib/craft: metadata detection (regression)', () => {
     metadataLength.writeUInt32BE(((metaSectionLength & 0x7fffffff) | 0x80000000) >>> 0, 0);
 
     const buffer = Buffer.concat([
-      CRAFT_MAGIC, Buffer.from([CRAFT_VERSION]), metadataLength,
+      CRAFT_MAGIC, Buffer.from([3]), metadataLength,
       forcedMetaSalt, metaIv, metaAuthTag, encryptedMeta,
       salt, iv, authTag, encrypted,
     ]);

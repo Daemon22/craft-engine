@@ -10,6 +10,8 @@ export enum CraftTier {
   GOV = 'GOV'
 }
 
+export type CraftTierValue = `${CraftTier}`;
+
 export interface FeatureSet {
   maxFileSize: number;      // Maximum file size in MB
   allowStreaming: boolean;  // Constant-memory v4 support
@@ -42,7 +44,7 @@ const TIER_CONFIGS: Record<CraftTier, FeatureSet> = {
   }
 };
 
-export function getFeatures(tier: CraftTier = CraftTier.FREE): FeatureSet {
+export function getFeatures(tier: CraftTierValue = CraftTier.FREE): FeatureSet {
   return TIER_CONFIGS[tier];
 }
 

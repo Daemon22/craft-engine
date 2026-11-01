@@ -28,6 +28,7 @@ import {
   MacroResult,
   METADATA_ENCRYPTED_FLAG,
   METADATA_LENGTH_MASK,
+  CRAFT_VERSION,
 } from './types';
 import {
   validateCredentialKey,
@@ -38,7 +39,7 @@ import {
 /** Minimum supported CRAFT version */
 const MIN_VERSION = 1;
 /** Maximum supported CRAFT version */
-const MAX_VERSION = 3;
+const MAX_VERSION = CRAFT_VERSION;
 /** First version that stores an explicit metadata-encrypted flag instead of sniffing content */
 const FIRST_EXPLICIT_FLAG_VERSION = 3;
 
@@ -101,6 +102,7 @@ function resolveMetadataEncryption(
 interface ParsedPackage {
   version: number;
   metadataEncrypted: boolean;
+  aad?: Buffer;
   /** Parsed plaintext metadata (only present when metadataEncrypted is false) */
   metadata?: CraftMetadata;
   metaSalt?: Buffer;
@@ -135,10 +137,10 @@ function parsePackage(craftBuffer: Buffer): ParsedPackage {
 
   // Read and validate version
   const version = craftBuffer[offset];
-  if (version < MIN_VERSION || version > MAX_VERSION) {
+  if (version < MIN_VERSION || version > MAX_VERSION || version === 4) {
     throw new Error(
       `Unsupported CRAFT version: ${version}. ` +
-      `Supported versions: ${MIN_VERSION}-${MAX_VERSION}.`
+      `Supported single-file versions: 1–3 and 5.`
     );
   }
   offset += 1;
@@ -249,6 +251,9 @@ function parsePackage(craftBuffer: Buffer): ParsedPackage {
     }
   }
 
+  // v5 authenticates the exact header and metadata bytes, including the flag.
+  const aad = version >= 5 ? craftBuffer.subarray(0, offset) : undefined;
+
   // Read data crypto parameters
   const salt = craftBuffer.subarray(offset, offset + SALT_LENGTH);
   offset += SALT_LENGTH;
@@ -273,6 +278,7 @@ function parsePackage(craftBuffer: Buffer): ParsedPackage {
   return {
     version,
     metadataEncrypted,
+    aad,
     metadata,
     metaSalt,
     metaIv,
@@ -410,7 +416,7 @@ export async function macro(
   }
 
   const { key: dataKey } = await deriveKeyAsync(secretInput, pkg.salt);
-  const compressed = decryptWithKey(pkg.encrypted, dataKey, pkg.iv, pkg.authTag);
+  const compressed = decryptWithKey(pkg.encrypted, dataKey, pkg.iv, pkg.authTag, pkg.aad);
 
   // Step 3: Decompress + verify integrity
   return await finishMacro(metadata, compressed);
@@ -450,7 +456,7 @@ export async function macroWithKeys(
     metadata = pkg.metadata as CraftMetadata;
   }
 
-  const compressed = decryptWithKey(pkg.encrypted, keys.dataKey, pkg.iv, pkg.authTag);
+  const compressed = decryptWithKey(pkg.encrypted, keys.dataKey, pkg.iv, pkg.authTag, pkg.aad);
   return await finishMacro(metadata, compressed);
 }
 

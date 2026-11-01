@@ -149,10 +149,11 @@ export async function encryptAsync(data: Buffer, passphrase: string): Promise<En
  * PBKDF2-SHA256 with 600,000 iterations and a 16-byte salt, and the salt is
  * carried alongside so the package remains fully self-describing.
  */
-export function encryptWithKey(data: Buffer, key: Buffer, salt: Buffer): EncryptResult {
+export function encryptWithKey(data: Buffer, key: Buffer, salt: Buffer, aad?: Buffer): EncryptResult {
   const iv = randomBytes(IV_LENGTH);
 
   const cipher = createCipheriv('aes-256-gcm', key, iv);
+  if (aad) cipher.setAAD(aad);
   const encrypted = Buffer.concat([
     cipher.update(data),
     cipher.final(),
@@ -213,9 +214,11 @@ export function decryptWithKey(
   key: Buffer,
   iv: Buffer,
   authTag: Buffer,
+  aad?: Buffer,
 ): Buffer {
   const decipher = createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(authTag);
+  if (aad) decipher.setAAD(aad);
 
   const decrypted = Buffer.concat([
     decipher.update(encrypted),

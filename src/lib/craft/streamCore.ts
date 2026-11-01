@@ -404,6 +404,15 @@ export async function readExact(
     // Drain whatever is synchronously available from the internal buffer.
     let part: Buffer | null;
     while ((part = stream.read(n - total) as Buffer | null) !== null) {
+      const needed = n - total;
+      if (part.length > needed) {
+        const readable = stream as NodeJS.ReadableStream & { unshift?: (chunk: Buffer) => void };
+        if (typeof readable.unshift !== 'function') {
+          throw new Error('Invalid CRAFT stream: cannot preserve unread bytes.');
+        }
+        readable.unshift(part.subarray(needed));
+        part = part.subarray(0, needed);
+      }
       chunks.push(part);
       total += part.length;
       if (total >= n) break;

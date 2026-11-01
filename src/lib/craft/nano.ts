@@ -76,7 +76,6 @@ export async function nano(
   }
 
   const { key: dataKey, salt } = await deriveKeyAsync(secret);
-  const { encrypted, iv, authTag } = encryptWithKey(compressed, dataKey, salt);
 
   const metadata: CraftMetadata = {
     originalName,
@@ -108,11 +107,11 @@ export async function nano(
     : metadataSection.length;
   metadataLength.writeUInt32BE(lengthField, 0);
 
+  const header = Buffer.concat([CRAFT_MAGIC, Buffer.from([CRAFT_VERSION]), metadataLength, metadataSection]);
+  const { encrypted, iv, authTag } = encryptWithKey(compressed, dataKey, salt, header);
+
   const buffer = Buffer.concat([
-    CRAFT_MAGIC,
-    Buffer.from([CRAFT_VERSION]),
-    metadataLength,
-    metadataSection,
+    header,
     salt,
     iv,
     authTag,

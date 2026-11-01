@@ -122,7 +122,57 @@ async function peekVersion(pathname: string): Promise<{ version: number }> {
 }
 
 function isLegacy(version: number): boolean {
-  return version >= 1 && version < STREAM_VERSION; // v1/v2/v3
+  return (version >= 1 && version < STREAM_VERSION) || version === 5; // single-file v1–v3 and v5
+}
+
+/** Restore a single-file package, then publish only after verification succeeds. */
+async function decodeSingleFile(input: Buffer, passphrase: string, opts: MacroStreamOptions): Promise<MacroStreamResult> {
+  const res = await macro(input, passphrase);
+  if (!opts.verifyOnly && typeof opts.output === 'string') {
+    const output = path.resolve(opts.output);
+    const tempDir = fs.mkdtempSync(path.join(path.dirname(output), `.${path.basename(output)}.crafttmp-restore-`));
+    const tempFile = path.join(tempDir, 'data');
+    try {
+      fs.writeFileSync(tempFile, res.buffer, { flag: 'wx', mode: 0o600 });
+      if (opts.force) {
+        fs.renameSync(tempFile, output);
+      } else {
+        try {
+          fs.linkSync(tempFile, output); // Atomic no-overwrite publication.
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+            throw new Error(`Output file already exists: ${opts.output} (use --force to overwrite, or choose a different -o path)`);
+          }
+          throw error;
+        }
+      }
+    } finally {
+      if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+      fs.rmdirSync(tempDir);
+    }
+  } else if (!opts.verifyOnly && opts.output && typeof opts.output !== 'string') {
+    const output = opts.output;
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      output.once('error', onError);
+      try {
+        output.write(res.buffer, (error?: Error | null) => {
+          if (error) reject(error); // Keep the listener for the stream's error event.
+          else { output.removeListener('error', onError); resolve(); }
+        });
+      } catch (error) {
+        output.removeListener('error', onError);
+        reject(error);
+      }
+    });
+  }
+  return {
+    buffer: !opts.verifyOnly && opts.output === undefined ? res.buffer : undefined,
+    metadata: res.metadata,
+    integrityVerified: res.integrityVerified,
+    bytesRestored: res.buffer.length,
+    chunksRead: 0,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -241,14 +291,7 @@ export async function macroStream(
   if (Buffer.isBuffer(input)) {
     const { version } = readMagicVersion(input);
     if (isLegacy(version)) {
-      const res = await macro(input, passphrase);
-      return {
-        buffer: res.buffer,
-        metadata: res.metadata,
-        integrityVerified: res.integrityVerified,
-        bytesRestored: res.buffer.length,
-        chunksRead: 0,
-      };
+      return decodeSingleFile(input, passphrase, opts);
     }
     const { read } = bufferReader(input);
     return decodeV4(read, passphrase, opts, null);
@@ -259,14 +302,7 @@ export async function macroStream(
     const { version } = await peekVersion(input);
     if (isLegacy(version)) {
       const full = fs.readFileSync(input);
-      const res = await macro(full, passphrase);
-      return {
-        buffer: res.buffer,
-        metadata: res.metadata,
-        integrityVerified: res.integrityVerified,
-        bytesRestored: res.buffer.length,
-        chunksRead: 0,
-      };
+      return decodeSingleFile(full, passphrase, opts);
     }
     // v4: open a fresh streaming reader over the whole file.
     const stream = createReadStream(input, { highWaterMark: Math.max(opts.chunkSize ?? DEFAULT_STREAM_CHUNK_SIZE, 64 * 1024) });
@@ -280,14 +316,7 @@ export async function macroStream(
   if (isLegacy(version)) {
     const rest = await drainToBuffer(input);
     const full = Buffer.concat([head, rest]);
-    const res = await macro(full, passphrase);
-    return {
-      buffer: res.buffer,
-      metadata: res.metadata,
-      integrityVerified: res.integrityVerified,
-      bytesRestored: res.buffer.length,
-      chunksRead: 0,
-    };
+    return decodeSingleFile(full, passphrase, opts);
   }
   // v4: prepend the 7 peeked bytes so the reader starts at offset 0.
   const stream = prependBytes(head, input);
