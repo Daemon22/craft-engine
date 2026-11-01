@@ -122,7 +122,7 @@ export interface MacroResult {
   buffer: Buffer;
   /** Metadata extracted from the package */
   metadata: CraftMetadata;
-  /** Whether SHA-256 integrity verification passed */
+  /** Whether the restored payload matches the stored SHA-256 checksum. Plaintext metadata is not authenticated. */
   integrityVerified: boolean;
 }
 
@@ -141,7 +141,7 @@ export interface NanoOptions {
    * each character repeated at most 3 times (values and specials alike).
    */
   credentialKey?: string;
-  /** Whether to encrypt the metadata (default: true for filename privacy) */
+  /** Encrypt and authenticate metadata (default: true). When false, v3 metadata is public and unauthenticated. */
   encryptMetadata?: boolean;
   /**
    * Whether to self-verify the package immediately after building it, by
