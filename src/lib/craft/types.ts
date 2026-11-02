@@ -4,18 +4,18 @@
  *  Type Definitions & Constants — The Living Canvas Edition
  * ═══════════════════════════════════════════════════════════════
  *
- *  The CRAFT package format (v3 — 7-Fold Compression):
+ *  Single-file layout (v3 and v5 — 7-Fold Compression):
  *
  *  With encrypted metadata (encryptMetadata: true, default):
  *  ┌──────────┬─────────┬──────────┬───────────┬─────────┬─────────────┬───────────────┬──────┬──────┬──────────┬───────────────┐
  *  │ MAGIC(6) │ VER(1)  │ ML(4)    │ META_SALT │ META_IV │ META_AUTHTAG│ ENCRYPTED_META│ SALT │ IV   │ AUTHTAG  │ ENCRYPTED     │
- *  │ "CRAFT1" │ 0x03    │ uint32BE │ 16B       │ 12B     │ 16B         │ variable      │ 16B  │ 12B  │ 16B      │ variable      │
+ *  │ "CRAFT1" │ 03/05    │ uint32BE │ 16B       │ 12B     │ 16B         │ variable      │ 16B  │ 12B  │ 16B      │ variable      │
  *  └──────────┴─────────┴──────────┴───────────┴─────────┴─────────────┴───────────────┴──────┴──────┴──────────┴───────────────┘
  *
  *  With plaintext metadata (encryptMetadata: false, backward compat):
  *  ┌──────────┬─────────┬──────────┬──────┬──────┬────┬──────────┬───────────────┐
  *  │ MAGIC(6) │ VER(1)  │ ML(4)    │ META │ SALT │ IV │ AUTHTAG  │ ENCRYPTED     │
- *  │ "CRAFT1" │ 0x03    │ uint32BE │ JSON │ 16B  │12B │ 16B      │ variable      │
+ *  │ "CRAFT1" │ 03/05    │ uint32BE │ JSON │ 16B  │12B │ 16B      │ variable      │
  *  └──────────┴─────────┴──────────┴──────┴──────┴────┴──────────┴───────────────┘
  *
  *  ML (metadata length field, v3+): the high bit (bit 31) is an explicit
@@ -25,18 +25,22 @@
  *  misfiring whenever a random metadata salt happened to start with 0x7B,
  *  permanently corrupting the package. v3 removes that ambiguity by
  *  recording the flag explicitly. Reading v1/v2 packages still uses the
- *  old sniffing heuristic for backward compatibility.
+ *  old sniffing heuristic for backward compatibility. In v5 the payload
+ *  AES-GCM tag authenticates MAGIC || VER || ML || the metadata section.
+ *  Older v1–v3 plaintext metadata remains readable but is unauthenticated.
  *
  *  The ENCRYPTED payload contains: [strategy_id(1), ...compressed_data]
  *  where compressed_data = Brotli(pre_processed(original_data))
  *  The strategy_id tells decompression which inverse transforms to apply.
  */
 
+import type { CraftTierValue } from './features';
+
 /** Magic bytes identifying a CRAFT package — "CRAFT1" */
 export const CRAFT_MAGIC = Buffer.from('CRAFT1');
 
-/** Current CRAFT format version (v3 = 7-fold compression + explicit metadata-encrypted flag) */
-export const CRAFT_VERSION = 3;
+/** Current single-file format: v5 authenticates the header and metadata with the payload */
+export const CRAFT_VERSION = 5;
 
 /** CRAFT archive format version (v3 = multi-file archive, metadata as AAD) */
 export const CRAFT_ARCHIVE_VERSION = 3;
@@ -120,12 +124,14 @@ export interface MacroResult {
   buffer: Buffer;
   /** Metadata extracted from the package */
   metadata: CraftMetadata;
-  /** Whether SHA-256 integrity verification passed */
+  /** Whether the restored payload matches the stored SHA-256 checksum. Legacy plaintext metadata is not authenticated. */
   integrityVerified: boolean;
 }
 
 /** Options for the Nano operation */
 export interface NanoOptions {
+  /** Feature tier (default: FREE); the KDF uses the same fixed policy for all tiers. */
+  tier?: CraftTierValue;
   /** Compression mode: '7fold' (default) or 'brotli' (legacy) */
   compressionMode?: CompressionMode;
   /** Encryption algorithm (default: 'aes-256-gcm') */
@@ -137,7 +143,7 @@ export interface NanoOptions {
    * each character repeated at most 3 times (values and specials alike).
    */
   credentialKey?: string;
-  /** Whether to encrypt the metadata (default: true for filename privacy) */
+  /** Encrypt metadata (default: true). In v5 metadata is authenticated even when public; v1–v3 plaintext metadata is not authenticated. */
   encryptMetadata?: boolean;
   /**
    * Whether to self-verify the package immediately after building it, by

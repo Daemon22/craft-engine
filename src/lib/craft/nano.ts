@@ -14,9 +14,6 @@ import {
   CraftMetadata,
   NanoResult,
   NanoOptions,
-  SALT_LENGTH,
-  IV_LENGTH,
-  AUTH_TAG_LENGTH,
   METADATA_ENCRYPTED_FLAG,
 } from './types';
 import {
@@ -43,7 +40,7 @@ export async function nano(
   passphrase: string,
   options?: NanoOptions,
 ): Promise<NanoResult> {
-  const tier = (options as any)?.tier || CraftTier.FREE;
+  const tier = options?.tier || CraftTier.FREE;
   const features = getFeatures(tier);
 
   // 1. Strict File Size Enforcement
@@ -78,8 +75,7 @@ export async function nano(
     compressed = compress(data);
   }
 
-  const { key: dataKey, salt } = await deriveKeyAsync(secret, undefined, features.kdfIterations);
-  const { encrypted, iv, authTag } = encryptWithKey(compressed, dataKey, salt);
+  const { key: dataKey, salt } = await deriveKeyAsync(secret);
 
   const metadata: CraftMetadata = {
     originalName,
@@ -92,25 +88,30 @@ export async function nano(
     originalChecksum,
     createdAt: new Date().toISOString(),
     version: CRAFT_VERSION,
-    metadataEncrypted: true,
+    metadataEncrypted: options?.encryptMetadata !== false,
   };
 
   const metadataJson = Buffer.from(JSON.stringify(metadata), 'utf-8');
-  const { key: metaKey, salt: metaKeySalt } = await deriveKeyAsync(secret, undefined, features.kdfIterations);
-  const metaResult = encryptMetadataWithKey(metadataJson, metaKey, metaKeySalt);
+  let metadataSection = metadataJson;
+  if (metadata.metadataEncrypted) {
+    const { key: metaKey, salt: metaKeySalt } = await deriveKeyAsync(secret);
+    const metaResult = encryptMetadataWithKey(metadataJson, metaKey, metaKeySalt);
+    metadataSection = Buffer.concat([
+      metaResult.metaSalt, metaResult.metaIv, metaResult.metaAuthTag, metaResult.encrypted,
+    ]);
+  }
 
-  const metaSectionLength = SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH + metaResult.encrypted.length;
   const metadataLength = Buffer.alloc(4);
-  metadataLength.writeUInt32BE(((metaSectionLength & 0x7fffffff) | METADATA_ENCRYPTED_FLAG) >>> 0, 0);
+  const lengthField = metadata.metadataEncrypted
+    ? ((metadataSection.length & 0x7fffffff) | METADATA_ENCRYPTED_FLAG) >>> 0
+    : metadataSection.length;
+  metadataLength.writeUInt32BE(lengthField, 0);
+
+  const header = Buffer.concat([CRAFT_MAGIC, Buffer.from([CRAFT_VERSION]), metadataLength, metadataSection]);
+  const { encrypted, iv, authTag } = encryptWithKey(compressed, dataKey, salt, header);
 
   const buffer = Buffer.concat([
-    CRAFT_MAGIC,
-    Buffer.from([CRAFT_VERSION]),
-    metadataLength,
-    metaResult.metaSalt,
-    metaResult.metaIv,
-    metaResult.metaAuthTag,
-    metaResult.encrypted,
+    header,
     salt,
     iv,
     authTag,

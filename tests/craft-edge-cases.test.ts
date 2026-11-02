@@ -440,10 +440,9 @@ describe('edge cases: peekMetadata robustness', () => {
     const data = Buffer.from('secret');
     const pkg = await nano(data, 'secret-name.txt', 'text/plain', PASS);
     const meta = peekMetadata(pkg.buffer);
-    // Encrypted metadata should show [encrypted] or similar
-    if (meta.originalName !== 'secret-name.txt') {
-      expect(meta.originalName).toBeTruthy();
-    }
+    expect(meta.originalName).toBe('[encrypted]');
+    expect(pkg.metadata.metadataEncrypted).toBe(true);
+    expect((await macro(pkg.buffer, PASS)).buffer.equals(data)).toBe(true);
   });
 
   test('peekMetadata on plaintext metadata shows name', async () => {
@@ -451,5 +450,9 @@ describe('edge cases: peekMetadata robustness', () => {
     const pkg = await nano(data, 'public-name.txt', 'text/plain', PASS, { encryptMetadata: false });
     const meta = peekMetadata(pkg.buffer);
     expect(meta.originalName).toBe('public-name.txt');
+    expect(pkg.metadata.metadataEncrypted).toBe(false);
+    const restored = await macro(pkg.buffer, PASS);
+    expect(restored.metadata.originalName).toBe('public-name.txt');
+    expect(restored.buffer.equals(data)).toBe(true);
   });
 });

@@ -23,8 +23,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { createHash } from 'crypto';
-import { createReadStream, createWriteStream, WriteStream } from 'fs';
+import { createWriteStream, WriteStream } from 'fs';
 import { finished } from 'stream/promises';
+import type { FileHandle } from 'fs/promises';
 import { Readable } from 'stream';
 import {
   IV_LENGTH,
@@ -37,7 +38,6 @@ import { decryptMetadataAsync } from './codec';
 import {
   STREAM_VERSION,
   CRYPTO_OVERHEAD,
-  DEFAULT_STREAM_CHUNK_SIZE,
   StreamMetadata,
   MacroStreamOptions,
   MacroStreamResult,
@@ -110,19 +110,110 @@ function prependBytes(prefix: Buffer, source: NodeJS.ReadableStream): Readable {
 // Version routing
 // ─────────────────────────────────────────────────────────────
 
-/** Read exactly 7 bytes (magic+version) from a file path without consuming it. */
-async function peekVersion(pathname: string): Promise<{ version: number }> {
-  const s = createReadStream(pathname, { highWaterMark: 64 * 1024 });
-  try {
-    const head = await readExact(s, 7);
-    return readMagicVersion(head);
-  } finally {
-    s.destroy();
-  }
+/** Read from one opened file using explicit positions, retaining bounded memory. */
+function fileReader(file: FileHandle, size: number): ByteReader {
+  let position = 0;
+  return async (length: number) => {
+    if (length < 0 || length > size - position) {
+      throw new Error('Invalid CRAFT package: truncated data — attempted to read past end of archive.');
+    }
+    const buffer = Buffer.alloc(length);
+    let total = 0;
+    while (total < length) {
+      const { bytesRead } = await file.read(buffer, total, length - total, position + total);
+      if (bytesRead === 0) {
+        throw new Error(`Invalid CRAFT package: stream ended before ${length} bytes could be read (wanted ${length}, got ${total}).`);
+      }
+      total += bytesRead;
+    }
+    position += total;
+    return buffer;
+  };
 }
 
 function isLegacy(version: number): boolean {
-  return version >= 1 && version < STREAM_VERSION; // v1/v2/v3
+  return (version >= 1 && version < STREAM_VERSION) || version === 5; // single-file v1–v3 and v5
+}
+
+interface SourceIdentity {
+  path?: string | Buffer;
+  stat: fs.Stats;
+}
+
+/** ReadStream exposes its descriptor at runtime, including for fd-backed streams. */
+function readStreamDescriptor(stream: fs.ReadStream): number | undefined {
+  const fd = (stream as fs.ReadStream & { fd?: number | null }).fd;
+  return typeof fd === 'number' ? fd : undefined;
+}
+
+/** Refuse to replace the source archive, including through a filesystem alias. */
+function assertDistinctFiles(source: SourceIdentity | undefined, output: string): void {
+  if (!source) return;
+  let same = typeof source.path === 'string' && path.resolve(source.path) === path.resolve(output);
+  if (!same) {
+    try {
+      const destination = fs.statSync(output);
+      same = source.stat.ino !== 0 && source.stat.dev === destination.dev && source.stat.ino === destination.ino;
+      if (!same && source.path !== undefined) {
+        same = fs.realpathSync(source.path) === fs.realpathSync(output);
+      }
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  if (same) throw new Error('Output path refers to the input archive; choose a different output path.');
+}
+
+/** Restore a single-file package, then publish only after verification succeeds. */
+async function decodeSingleFile(input: Buffer, passphrase: string, opts: MacroStreamOptions, source?: SourceIdentity): Promise<MacroStreamResult> {
+  const res = await macro(input, passphrase);
+  if (!opts.verifyOnly && typeof opts.output === 'string') {
+    const output = path.resolve(opts.output);
+    assertDistinctFiles(source, output);
+    const tempDir = fs.mkdtempSync(path.join(path.dirname(output), `.${path.basename(output)}.crafttmp-restore-`));
+    const tempFile = path.join(tempDir, 'data');
+    try {
+      fs.writeFileSync(tempFile, res.buffer, { flag: 'wx', mode: 0o600 });
+      if (opts.force) {
+        assertDistinctFiles(source, output);
+        fs.renameSync(tempFile, output);
+      } else {
+        try {
+          fs.linkSync(tempFile, output); // Atomic no-overwrite publication.
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+            throw new Error(`Output file already exists: ${opts.output} (use --force to overwrite, or choose a different -o path)`);
+          }
+          throw error;
+        }
+      }
+    } finally {
+      if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+      fs.rmdirSync(tempDir);
+    }
+  } else if (!opts.verifyOnly && opts.output && typeof opts.output !== 'string') {
+    const output = opts.output;
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      output.once('error', onError);
+      try {
+        output.write(res.buffer, (error?: Error | null) => {
+          if (error) reject(error); // Keep the listener for the stream's error event.
+          else { output.removeListener('error', onError); resolve(); }
+        });
+      } catch (error) {
+        output.removeListener('error', onError);
+        reject(error);
+      }
+    });
+  }
+  return {
+    buffer: !opts.verifyOnly && opts.output === undefined ? res.buffer : undefined,
+    metadata: res.metadata,
+    integrityVerified: res.integrityVerified,
+    bytesRestored: res.buffer.length,
+    chunksRead: 0,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -237,62 +328,80 @@ export async function macroStream(
     throw new Error('Passphrase must be at least 12 characters for secure decryption.');
   }
 
+  // For pathname input, open once: the same descriptor supplies the identity,
+  // version and all decoded bytes, even if the pathname changes meanwhile.
+  if (typeof input === 'string') {
+    const file = await fs.promises.open(input, 'r');
+    try {
+      const stat = await file.stat();
+      const source = !opts.verifyOnly && typeof opts.output === 'string'
+        ? { path: input, stat }
+        : undefined;
+      if (source) assertDistinctFiles(source, opts.output as string);
+      const read = fileReader(file, stat.size);
+      const head = await read(7);
+      const { version } = readMagicVersion(head);
+      if (isLegacy(version)) {
+        // fileReader uses positioned reads, so readFile starts at offset zero.
+        const full = await file.readFile();
+        return await decodeSingleFile(full, passphrase, opts, source);
+      }
+      let first = true;
+      const readFromStart: ByteReader = async (length) => {
+        if (first) {
+          first = false;
+          if (length !== head.length) throw new Error('Invalid CRAFT package: unexpected header length.');
+          return head;
+        }
+        return read(length);
+      };
+      return await decodeV4(readFromStart, passphrase, opts, null, source);
+    } finally {
+      await file.close();
+    }
+  }
+
+  let source: SourceIdentity | undefined;
+  let streamPath: string | Buffer | undefined;
+  const checkStreamSource = !opts.verifyOnly && typeof opts.output === 'string' && input instanceof fs.ReadStream;
+  if (checkStreamSource && input instanceof fs.ReadStream) {
+    const fd = readStreamDescriptor(input);
+    if (fd !== undefined) {
+      source = { stat: fs.fstatSync(fd) };
+      assertDistinctFiles(source, opts.output as string);
+    } else if (typeof input.path === 'string' || Buffer.isBuffer(input.path)) {
+      streamPath = input.path;
+    }
+  }
+
   // ── Buffer input: route by version directly ──────────────────
   if (Buffer.isBuffer(input)) {
     const { version } = readMagicVersion(input);
     if (isLegacy(version)) {
-      const res = await macro(input, passphrase);
-      return {
-        buffer: res.buffer,
-        metadata: res.metadata,
-        integrityVerified: res.integrityVerified,
-        bytesRestored: res.buffer.length,
-        chunksRead: 0,
-      };
+      return decodeSingleFile(input, passphrase, opts);
     }
     const { read } = bufferReader(input);
     return decodeV4(read, passphrase, opts, null);
   }
 
-  // ── Path input: peek version without consuming the stream ──────
-  if (typeof input === 'string') {
-    const { version } = await peekVersion(input);
-    if (isLegacy(version)) {
-      const full = fs.readFileSync(input);
-      const res = await macro(full, passphrase);
-      return {
-        buffer: res.buffer,
-        metadata: res.metadata,
-        integrityVerified: res.integrityVerified,
-        bytesRestored: res.buffer.length,
-        chunksRead: 0,
-      };
-    }
-    // v4: open a fresh streaming reader over the whole file.
-    const stream = createReadStream(input, { highWaterMark: Math.max(opts.chunkSize ?? DEFAULT_STREAM_CHUNK_SIZE, 64 * 1024) });
-    const read: ByteReader = async (n: number) => readExact(stream, n);
-    return decodeV4(read, passphrase, opts, stream);
-  }
-
   // ── Readable input: read 7 bytes to route, then continue ───────
   const head = await readExact(input, 7);
+  if (checkStreamSource && input instanceof fs.ReadStream) {
+    const fd = readStreamDescriptor(input);
+    if (fd === undefined) throw new Error('Cannot verify the input archive identity from its read stream.');
+    source = { path: streamPath, stat: fs.fstatSync(fd) };
+    assertDistinctFiles(source, opts.output as string);
+  }
   const { version } = readMagicVersion(head);
   if (isLegacy(version)) {
     const rest = await drainToBuffer(input);
     const full = Buffer.concat([head, rest]);
-    const res = await macro(full, passphrase);
-    return {
-      buffer: res.buffer,
-      metadata: res.metadata,
-      integrityVerified: res.integrityVerified,
-      bytesRestored: res.buffer.length,
-      chunksRead: 0,
-    };
+    return decodeSingleFile(full, passphrase, opts, source);
   }
   // v4: prepend the 7 peeked bytes so the reader starts at offset 0.
   const stream = prependBytes(head, input);
   const read: ByteReader = async (n: number) => readExact(stream, n);
-  return decodeV4(read, passphrase, opts, stream);
+  return decodeV4(read, passphrase, opts, stream, source);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -304,6 +413,7 @@ async function decodeV4(
   passphrase: string,
   opts: MacroStreamOptions,
   backingStream: Readable | null,
+  source?: SourceIdentity,
 ): Promise<MacroStreamResult> {
   let header: { metadata: ParsedMetadata; dataSalt: Buffer; chunkCount: number; chunkSize: number; originalSize: number };
   try {
@@ -336,7 +446,7 @@ async function decodeV4(
     if (!w.write(chunkBytes)) await new Promise<void>((r) => w.once('drain', r));
   };
 
-  if (typeof opts.output === 'string') {
+  if (!verifyOnly && typeof opts.output === 'string') {
     if (fs.existsSync(opts.output) && !opts.force) {
       throw new Error(`Output file already exists: ${opts.output} (use --force to overwrite, or choose a different -o path)`);
     }
@@ -404,6 +514,7 @@ async function decodeV4(
     if (writer) {
       writer.end();
       await finished(writer);
+      assertDistinctFiles(source, opts.output as string);
       fs.renameSync(restoreTmp, opts.output as string); // clobbers only when --force pre-checks
     }
 

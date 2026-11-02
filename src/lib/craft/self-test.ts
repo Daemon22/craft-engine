@@ -4,7 +4,7 @@
  */
 import { nano } from './nano';
 import { macro } from './macro';
-import { CraftTier } from './features';
+import { CraftTier, getFeatures } from './features';
 
 export interface SelfTestResult {
   ok: true;
@@ -42,7 +42,7 @@ export async function selfTest(tier: CraftTier = CraftTier.FREE): Promise<SelfTe
   try {
     const data = Buffer.from('CRAFT self-test fixture. '.repeat(100));
     // Use the requested tier for the test
-    const packed = await nano(data, 'selftest.txt', 'text/plain', passphrase, { tier } as any);
+    const packed = await nano(data, 'selftest.txt', 'text/plain', passphrase, { tier });
     const restored = await macro(packed.buffer, passphrase);
     if (!restored.buffer.equals(data) || !restored.integrityVerified) {
       throw new Error('base round-trip mismatch');
@@ -60,7 +60,7 @@ export async function selfTest(tier: CraftTier = CraftTier.FREE): Promise<SelfTe
     checkedStrategies,
     durationMs: Date.now() - start,
     complianceLevel: tier === CraftTier.GOV ? 'HIGH-GOV' : (tier === CraftTier.PRO ? 'ENTERPRISE' : 'STANDARD'),
-    securityFloor: tier === CraftTier.GOV ? 1_000_000 : (tier === CraftTier.PRO ? 600_000 : 100_000)
+    securityFloor: getFeatures(tier).kdfIterations
   };
 }
 

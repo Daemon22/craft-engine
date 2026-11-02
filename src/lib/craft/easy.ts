@@ -17,7 +17,7 @@ export const craft = {
    * If the file is > 100MB, it automatically switches to constant-memory
    * streaming to prevent system crashes (OOM) if the tier allows it.
    */
-  async pack(inputPath: string, passphrase: string, options?: NanoOptions & { tier?: CraftTier }) {
+  async pack(inputPath: string, passphrase: string, options?: NanoOptions) {
     if (!fs.existsSync(inputPath)) throw new Error(`File not found: ${inputPath}`);
 
     const stats = fs.statSync(inputPath);
