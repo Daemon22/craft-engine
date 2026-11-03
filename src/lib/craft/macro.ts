@@ -35,6 +35,14 @@ import {
   credentialKeySecret,
   CredentialKeyInput,
 } from './credentials';
+import {
+  CraftProgressDetails,
+  CraftProgressOptions,
+  CraftProgressReporter,
+  monitorCraftOperation,
+} from './progress';
+
+export interface MacroOptions extends CraftProgressOptions {}
 
 /** Minimum supported CRAFT version */
 const MIN_VERSION = 1;
@@ -334,28 +342,33 @@ function assertValidCraftPackage(craftBuffer: Buffer): void {
  * decompress (7-fold vs Brotli) then verify the SHA-256 checksum.
  * Shared by macro() and macroWithKeys().
  */
-async function finishMacro(metadata: CraftMetadata, compressed: Buffer): Promise<MacroResult> {
+async function finishMacro(metadata: CraftMetadata, compressed: Buffer,
+                           progress?: CraftProgressReporter): Promise<MacroResult> {
   // The compressionMode in metadata tells us exactly how to decompress:
   //   'brotli' = raw Brotli (no strategy byte prefix)
   //   '7fold'  = 7-fold adaptive (strategy byte prefix)
   // The 7-fold path uses decompress7Async so the decode runs on the libuv
   // threadpool (bounded blocking: it never stalls the event loop).
-  let restored: Buffer;
-  if (metadata.compressionMode === '7fold') {
-    restored = await decompress7Async(compressed);
-  } else {
-    restored = decompress(compressed);
-  }
+  const runStep = <T>(step: string, action: () => T | Promise<T>,
+                      details?: CraftProgressDetails | ((result: T) => CraftProgressDetails)) =>
+    progress ? progress.step(step, action, details) : action();
 
-  const integrityVerified = verify(restored, metadata.originalChecksum);
+  const restored = await runStep('decompress', async () => {
+    if (metadata.compressionMode === '7fold') return await decompress7Async(compressed);
+    return decompress(compressed);
+  }, { compressed_size_bytes: compressed.length, compression_mode: metadata.compressionMode });
 
-  if (!integrityVerified) {
-    throw new Error(
-      'INTEGRITY FAILURE: SHA-256 checksum mismatch! ' +
-      'The restored data does not match the original. ' +
-      'This could indicate data corruption or an incorrect passphrase.'
-    );
-  }
+  const integrityVerified = await runStep('verify_integrity', () => {
+    const verified = verify(restored, metadata.originalChecksum);
+    if (!verified) {
+      throw new Error(
+        'INTEGRITY FAILURE: SHA-256 checksum mismatch! ' +
+        'The restored data does not match the original. ' +
+        'This could indicate data corruption or an incorrect passphrase.'
+      );
+    }
+    return verified;
+  }, { restored_size_bytes: restored.length, algorithm: 'SHA-256' });
 
   return {
     buffer: restored,
@@ -380,46 +393,61 @@ async function finishMacro(metadata: CraftMetadata, compressed: Buffer): Promise
 export async function macro(
   craftBuffer: Buffer,
   secret: string | CredentialKeyInput,
+  options?: MacroOptions,
 ): Promise<MacroResult> {
-  // Input validation
-  assertValidCraftPackage(craftBuffer);
+  return monitorCraftOperation('macro', options, async (progress) => {
+    const { pkg, secretInput } = await progress.step('validate_and_parse_package', async () => {
+      assertValidCraftPackage(craftBuffer);
 
-  const isCredentialKey = typeof secret === 'object' && secret !== null && secret.type === 'credentialKey';
-  if (isCredentialKey) {
-    const v = validateCredentialKey((secret as CredentialKeyInput).value);
-    if (!v.valid) throw new Error(v.errors.join(' '));
-  } else if (typeof secret !== 'string') {
-    throw new Error('A passphrase or credential key is required for Macro extraction.');
-  }
-  if (!isCredentialKey && typeof secret === 'string') {
-    if (secret.length === 0) {
-      throw new Error('Passphrase is required for Macro extraction.');
+      const isCredentialKey = typeof secret === 'object' && secret !== null && secret.type === 'credentialKey';
+      if (isCredentialKey) {
+        const v = validateCredentialKey((secret as CredentialKeyInput).value);
+        if (!v.valid) throw new Error(v.errors.join(' '));
+      } else if (typeof secret !== 'string') {
+        throw new Error('A passphrase or credential key is required for Macro extraction.');
+      }
+      if (!isCredentialKey && typeof secret === 'string') {
+        if (secret.length === 0) throw new Error('Passphrase is required for Macro extraction.');
+        if (secret.length < 12) {
+          throw new Error('Passphrase must be at least 12 characters for secure decryption.');
+        }
+      }
+
+      const secretInput = isCredentialKey
+        ? credentialKeySecret((secret as CredentialKeyInput).value)
+        : (secret as string);
+      return { pkg: parsePackage(craftBuffer), secretInput };
+    }, result => ({
+      package_size_bytes: craftBuffer.length,
+      metadata_encrypted: result.pkg.metadataEncrypted,
+    }));
+
+    let metadata: CraftMetadata;
+    if (pkg.metadataEncrypted) {
+      const metaKey = await progress.step(
+        'derive_metadata_key',
+        async () => (await deriveKeyAsync(secretInput, pkg.metaSalt as Buffer)).key,
+      );
+      metadata = await progress.step(
+        'decrypt_metadata',
+        async () => decryptMetadataSection(pkg, metaKey),
+        { metadata_encrypted: true },
+      );
+    } else {
+      metadata = pkg.metadata as CraftMetadata;
     }
-    if (secret.length < 12) {
-      throw new Error('Passphrase must be at least 12 characters for secure decryption.');
-    }
-  }
 
-  const secretInput = isCredentialKey ? credentialKeySecret((secret as CredentialKeyInput).value) : (secret as string);
-
-  // Step 1: Parse the .craft package (structure + validation, no decryption)
-  const pkg = parsePackage(craftBuffer);
-
-  // Step 2: Derive keys and decrypt. The metadata and payload each carry
-  // their own random salt, so each requires its own PBKDF2 derivation.
-  let metadata: CraftMetadata;
-  if (pkg.metadataEncrypted) {
-    const { key: metaKey } = await deriveKeyAsync(secretInput, pkg.metaSalt as Buffer);
-    metadata = decryptMetadataSection(pkg, metaKey);
-  } else {
-    metadata = pkg.metadata as CraftMetadata;
-  }
-
-  const { key: dataKey } = await deriveKeyAsync(secretInput, pkg.salt);
-  const compressed = decryptWithKey(pkg.encrypted, dataKey, pkg.iv, pkg.authTag, pkg.aad);
-
-  // Step 3: Decompress + verify integrity
-  return await finishMacro(metadata, compressed);
+    const dataKey = await progress.step(
+      'derive_payload_key',
+      async () => (await deriveKeyAsync(secretInput, pkg.salt)).key,
+    );
+    const compressed = await progress.step(
+      'decrypt_payload',
+      async () => decryptWithKey(pkg.encrypted, dataKey, pkg.iv, pkg.authTag, pkg.aad),
+      { package_payload_size_bytes: pkg.encrypted.length, algorithm: 'AES-256-GCM' },
+    );
+    return finishMacro(metadata, compressed, progress);
+  });
 }
 
 /**
@@ -441,23 +469,40 @@ export async function macro(
 export async function macroWithKeys(
   craftBuffer: Buffer,
   keys: { metaKey?: Buffer; dataKey: Buffer },
+  progress?: CraftProgressReporter,
 ): Promise<MacroResult> {
-  assertValidCraftPackage(craftBuffer);
+  const runStep = <T>(step: string, action: () => T | Promise<T>,
+                      details?: CraftProgressDetails | ((result: T) => CraftProgressDetails)) =>
+    progress ? progress.step(step, action, details) : action();
 
-  const pkg = parsePackage(craftBuffer);
+  const pkg = await runStep('parse_package', () => {
+    assertValidCraftPackage(craftBuffer);
+    return parsePackage(craftBuffer);
+  }, result => ({
+    package_size_bytes: craftBuffer.length,
+    metadata_encrypted: result.metadataEncrypted,
+  }));
 
   let metadata: CraftMetadata;
   if (pkg.metadataEncrypted) {
     if (!keys.metaKey) {
       throw new Error('Invalid CRAFT package: encrypted metadata requires a metaKey to decrypt.');
     }
-    metadata = decryptMetadataSection(pkg, keys.metaKey);
+    metadata = await runStep(
+      'decrypt_metadata',
+      () => decryptMetadataSection(pkg, keys.metaKey as Buffer),
+      { metadata_encrypted: true },
+    );
   } else {
     metadata = pkg.metadata as CraftMetadata;
   }
 
-  const compressed = decryptWithKey(pkg.encrypted, keys.dataKey, pkg.iv, pkg.authTag, pkg.aad);
-  return await finishMacro(metadata, compressed);
+  const compressed = await runStep(
+    'decrypt_payload',
+    () => decryptWithKey(pkg.encrypted, keys.dataKey, pkg.iv, pkg.authTag, pkg.aad),
+    { package_payload_size_bytes: pkg.encrypted.length, algorithm: 'AES-256-GCM' },
+  );
+  return finishMacro(metadata, compressed, progress);
 }
 
 /**

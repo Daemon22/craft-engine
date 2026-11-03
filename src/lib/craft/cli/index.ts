@@ -3,8 +3,8 @@
  * CRAFT CLI — 7-Fold Compression Edition
  *
  * Usage:
- *   craft nano <file> -p <passphrase> [-o <output.craft>]
- *   craft macro <craft-file> -p <passphrase> [-o <output>]
+ *   craft nano <file> -p <passphrase> [-o <output.craft>] [--events progress.jsonl]
+ *   craft macro <craft-file> -p <passphrase> [-o <output>] [--events progress.jsonl]
  *   craft peek <craft-file>
  *   craft benchmark <file>
  *   craft checksum <file>
@@ -55,6 +55,7 @@ import { nanoStream } from '../nanoStream';
 import { macroStream, peekStreamMetadata } from '../macroStream';
 import { STREAM_VERSION, DEFAULT_STREAM_CHUNK_SIZE, NanoStreamResult, MacroStreamResult, StreamMetadata } from '../streamCore';
 import { CRAFT_MAGIC } from '../types';
+import { jsonlProgressObserver } from '../progress';
 
 const colors = {
   reset: '\x1b[0m', bold: '\x1b[1m', dim: '\x1b[2m',
@@ -419,6 +420,9 @@ async function cmdNano(filePath: string, opts: Record<string, string | boolean>)
   const outputPath = opts.o || opts.output;
   const credentialKeyValue = typeof opts.key === 'string' ? opts.key : undefined;
   const vaultCfg = vaultConfigFromArgs(opts);
+  const onProgress = typeof opts.events === 'string'
+    ? jsonlProgressObserver(path.resolve(opts.events))
+    : undefined;
 
   if (!credentialKeyValue && (typeof passphrase !== 'string' || passphrase.length === 0)) {
     error('A passphrase (-p <passphrase>) or a credential key (--key <7-char>) is required.');
@@ -456,7 +460,7 @@ async function cmdNano(filePath: string, opts: Record<string, string | boolean>)
   const result = await nano(
     data, fileName, mime,
     typeof passphrase === 'string' ? passphrase : '',
-    { compressionMode: '7fold', credentialKey: credentialKeyValue },
+    { compressionMode: '7fold', credentialKey: credentialKeyValue, onProgress },
   );
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
 
@@ -521,6 +525,9 @@ async function cmdMacro(filePath: string, opts: Record<string, string | boolean>
   const credentialKeyValue = typeof opts.key === 'string' ? opts.key : undefined;
   const usePasskey = opts.passkey === true;
   const vaultCfg = vaultConfigFromArgs(opts);
+  const onProgress = typeof opts.events === 'string'
+    ? jsonlProgressObserver(path.resolve(opts.events))
+    : undefined;
 
   if (!credentialKeyValue && !usePasskey && typeof passphrase !== 'string') {
     error('A passphrase (-p <passphrase>), credential key (--key <7-char>), or --passkey is required.');
@@ -560,7 +567,7 @@ async function cmdMacro(filePath: string, opts: Record<string, string | boolean>
       secretInput = credentialKey(credentialKeyValue);
     }
 
-    const result = await macro(craftBuffer, secretInput);
+    const result = await macro(craftBuffer, secretInput, { onProgress });
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
     console.log('');
     success(`Original name: ${result.metadata.originalName}`);
@@ -1266,7 +1273,7 @@ async function main() {
       console.log(`${colors.amber}${colors.bold}CRAFT${colors.reset} — 7-Fold Nano/Macro Encryption & Compression Engine`);
       console.log('');
       console.log('  craft nano <file> -p <passphrase> [-o output.craft] [--force]  7-Fold Compress & encrypt');
-      console.log('  craft macro <file.craft> -p <passphrase> [-o output] [--force] Decrypt & restore');
+      console.log('  Add --events progress.jsonl to nano or macro to write safe JSONL progress events');
       console.log('  craft benchmark <file>                                 Compare all strategies');
       console.log('  craft peek <file.craft>                                Inspect metadata');
       console.log('  craft checksum <file>                                  SHA-256 digest');

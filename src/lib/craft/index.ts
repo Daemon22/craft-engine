@@ -23,6 +23,14 @@ export type { CraftTierValue } from './features';
 // Primary Operations
 export { nano } from './nano';
 export { macro, peekMetadata, macroWithKeys } from './macro';
+export { CraftProgressObserverError, jsonlProgressObserver } from './progress';
+export type {
+  CraftOperation,
+  CraftProgressEvent,
+  CraftProgressObserver,
+  CraftProgressOptions,
+  CraftProgressStatus,
+} from './progress';
 
 // Streaming path (v4 — constant-memory, second execution path).
 // See docs/streaming-architecture.md and docs/chunk-format.md.

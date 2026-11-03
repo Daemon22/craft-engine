@@ -65,6 +65,27 @@ decrypt→decompress→checksum-verify chain nano's self-check already
 exercised, plus the CLI's same `safeWriteFile` protection on the way
 back out to disk.
 
+## Process monitoring hooks
+
+The `nano()` and `macro()` library calls accept `onProgress` and an optional
+`operationId`. They emit ordered start/completion/failure events for input
+validation, compression, key derivation, encryption/decryption, decompression,
+integrity checking, and nano's default self-verification. CRAFT also supports
+`craft nano ... --events progress.jsonl` and `craft macro ... --events
+progress.jsonl`; these append one JSON event per line for an external process
+monitor such as UPMP to consume.
+
+The event contract contains operation and stage IDs, status, timestamps,
+duration, and allowlisted technical measures such as byte counts and algorithm
+names. It does not include original filenames, file contents, checksums,
+passphrases, credential keys, or raw error messages. A progress observer that
+fails stops the CRAFT operation so the caller cannot treat unobserved work as
+verified. These hooks monitor the library operation; the CLI's subsequent
+filesystem writes and fixity sidecar writes remain separate steps for an
+orchestrator to check from the process result. Artifact ownership can be added
+by Vault later, while credential retrieval can be delegated to Keeper of
+Secrets without adding either dependency to the CRAFT codec.
+
 ## Quick start
 
 ```bash

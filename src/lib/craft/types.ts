@@ -35,6 +35,7 @@
  */
 
 import type { CraftTierValue } from './features';
+import type { CraftProgressOptions } from './progress';
 
 /** Magic bytes identifying a CRAFT package — "CRAFT1" */
 export const CRAFT_MAGIC = Buffer.from('CRAFT1');
@@ -129,7 +130,7 @@ export interface MacroResult {
 }
 
 /** Options for the Nano operation */
-export interface NanoOptions {
+export interface NanoOptions extends CraftProgressOptions {
   /** Feature tier (default: FREE); the KDF uses the same fixed policy for all tiers. */
   tier?: CraftTierValue;
   /** Compression mode: '7fold' (default) or 'brotli' (legacy) */
