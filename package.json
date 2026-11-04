@@ -42,9 +42,7 @@
     "build": "npm run build:lib && npm run build:web"
   },
   "dependencies": {
-    "@manya/craft-codec": "file:./craft-codec",
-    "uuid": "^11.1.0",
-    "zod": "^4.0.2"
+    "@manya/craft-codec": "file:./craft-codec"
   },
   "devDependencies": {
     "@next-auth/prisma-adapter": "^1.0.7",

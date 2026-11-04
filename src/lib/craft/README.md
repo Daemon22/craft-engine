@@ -12,6 +12,18 @@ Consolidating them is an open decision — see `CRAFT_AUDIT_NOTES.md`.
 Everything below is real, tested, and wired together — this doc is the
 map of how the pieces connect, not a wishlist.
 
+## Dependency footprint
+
+The published CRAFT CLI and library use Node's built-in modules and bundle
+the internal `@manya/craft-codec`; they have no third-party runtime
+dependencies. The unused direct `uuid` and `zod` entries have been removed.
+
+This repository also contains a Next.js web app. Its Next.js, React, Prisma,
+and authentication packages remain development dependencies for that app;
+TypeScript and Vitest are needed to build and test the source checkout. They
+are not runtime dependencies of the published CRAFT package. A full `npm ci`
+in this combined source repository installs the web and test tooling too.
+
 ## The full circuit
 
 ```
