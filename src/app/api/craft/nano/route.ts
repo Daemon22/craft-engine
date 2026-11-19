@@ -9,12 +9,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nano } from '@/lib/craft/nano';
 import { contentDispositionAttachment } from '@/lib/http';
+import { CRAFT_ARTIFACT_ICONS } from '@/lib/craft/artifact-icons';
 import { randomUUID } from 'crypto';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Expose-Headers': 'X-Craft-Artifact-Kind, X-Craft-Icon',
 };
 
 export async function OPTIONS() {
@@ -89,6 +91,8 @@ export async function POST(request: NextRequest) {
         'X-Craft-Mode': result.metadata.compressionMode,
         'X-Craft-Strategy': result.metadata.compressionStrategyName || 'brotli',
         'X-Craft-Version': result.metadata.version.toString(),
+        'X-Craft-Artifact-Kind': CRAFT_ARTIFACT_ICONS.compressionAndEncryption.kind,
+        'X-Craft-Icon': CRAFT_ARTIFACT_ICONS.compressionAndEncryption.publicPath,
         'X-Craft-Benchmarks': benchmarksJson,
         'X-Craft-Processing-Time': processingTime.toString(),
         'X-Craft-Request-Id': requestId,

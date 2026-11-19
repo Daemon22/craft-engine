@@ -2,9 +2,12 @@
 
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import { Activity, Archive, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, FileArchive, FileUp, Fingerprint, Layers3, LockKeyhole, ShieldCheck, Sparkles, Zap } from 'lucide-react';
+import { CRAFT_ARTIFACT_ICONS } from '@/lib/craft/artifact-icons';
 
 type Mode = 'nano' | 'macro';
+type ArtifactResult = { name: string; iconPath: string };
 
 function Dashboard() {
   const router = useRouter();
@@ -14,20 +17,21 @@ function Dashboard() {
   const [passphrase, setPassphrase] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [artifactResult, setArtifactResult] = useState<ArtifactResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (!isDemo) router.replace('/login'); }, [isDemo, router]);
   if (!isDemo) return null;
 
   function changeMode(next: Mode) {
-    setMode(next); setFile(null); setPassphrase(''); setMessage('');
+    setMode(next); setFile(null); setPassphrase(''); setMessage(''); setArtifactResult(null);
     if (inputRef.current) inputRef.current.value = '';
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file || passphrase.length < 12) return;
-    setBusy(true); setMessage('');
+    setBusy(true); setMessage(''); setArtifactResult(null);
     try {
       const data = new FormData(); data.append('file', file); data.append('passphrase', passphrase);
       const response = await fetch(`/api/craft/${mode}`, { method: 'POST', body: data });
@@ -43,6 +47,12 @@ function Dashboard() {
       if (originalName) { try { downloadName = decodeURIComponent(originalName); } catch { /* use fallback */ } }
       link.href = url; link.download = mode === 'nano' ? `${file.name.endsWith('.craft') ? file.name : `${file.name}.craft`}` : downloadName;
       link.click(); URL.revokeObjectURL(url);
+      if (mode === 'nano') {
+        setArtifactResult({
+          name: link.download,
+          iconPath: response.headers.get('X-Craft-Icon') || CRAFT_ARTIFACT_ICONS.compressionAndEncryption.publicPath,
+        });
+      }
       setMessage(mode === 'nano' ? 'Your archive is ready and downloading.' : 'Your file has been restored and is downloading.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Something went wrong. Please try again.'); }
     finally { setBusy(false); }
@@ -66,11 +76,12 @@ function Dashboard() {
         <div className="workspace-grid"><section className="panel archive-panel" id="archive"><div className="panel-heading"><div><div className="panel-kicker"><Sparkles size={14}/> THE CRAFT WORKSPACE</div><h2>Make space for what matters.</h2><p>Protect your files with compression and encryption.</p></div><span className="panel-icon"><Archive size={21}/></span></div>
           <div className="tabs" role="tablist" aria-label="Archive action"><button type="button" role="tab" aria-selected={mode==='nano'} onClick={()=>changeMode('nano')}><FileArchive size={16}/> Create archive</button><button type="button" role="tab" aria-selected={mode==='macro'} onClick={()=>changeMode('macro')}><ArrowDownToLine size={16}/> Restore file</button></div>
           <form onSubmit={submit}><div className="form-intro"><div><h3>{mode==='nano'?'Create a secure archive':'Restore an archive'}</h3><p>{mode==='nano'?'Choose a file to compress and protect.':'Choose a .craft file and enter its passphrase.'}</p></div><span className="step">{mode==='nano'?'NANO':'MACRO'} MODE</span></div>
-            <label className="dropzone" htmlFor="archive-file" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault(); setFile(e.dataTransfer.files[0] || null); setMessage('');}}><span className="upload-icon"><FileUp size={22}/></span><strong>{file ? file.name : <>Drop your file here, or <span>browse</span></>}</strong><small>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · Click to change file` : mode==='nano'?'Any file type · Maximum 100 MB':'.craft files · Maximum 100 MB'}</small></label>
-            <input ref={inputRef} id="archive-file" className="visually-hidden" type="file" accept={mode==='macro'?'.craft':undefined} onChange={e=>{setFile(e.target.files?.[0] || null); setMessage('');}} required={!file}/>
+            <label className="dropzone" htmlFor="archive-file" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault(); setFile(e.dataTransfer.files[0] || null); setMessage(''); setArtifactResult(null);}}><span className="upload-icon"><FileUp size={22}/></span><strong>{file ? file.name : <>Drop your file here, or <span>browse</span></>}</strong><small>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · Click to change file` : mode==='nano'?'Any file type · Maximum 100 MB':'.craft files · Maximum 100 MB'}</small></label>
+            <input ref={inputRef} id="archive-file" className="visually-hidden" type="file" accept={mode==='macro'?'.craft':undefined} onChange={e=>{setFile(e.target.files?.[0] || null); setMessage(''); setArtifactResult(null);}} required={!file}/>
             <div className="field-heading"><label htmlFor="passphrase">Passphrase</label><span>Minimum 12 characters</span></div><input id="passphrase" className="password" type="password" placeholder="Enter a strong passphrase" value={passphrase} onChange={e=>setPassphrase(e.target.value)} minLength={12} required autoComplete="off"/>
-            <button className="primary-button" disabled={busy || !file || passphrase.length < 12} type="submit">{busy?'Processing…':mode==='nano'?'Craft secure archive':'Restore file'} <ArrowRight size={17}/></button>{message && <p className="form-message" role="status">{message}</p>}
+            <button className="primary-button" disabled={busy || !file || passphrase.length < 12} type="submit">{busy?'Processing…':mode==='nano'?'Craft secure archive':'Restore file'} <ArrowRight size={17}/></button>{message && <div className="form-message" role="status">{artifactResult ? <span className="artifact-result"><Image className="artifact-result-icon" src={artifactResult.iconPath} alt="Compressed and encrypted archive icon" width={56} height={56}/><span><strong>{message}</strong><small>{artifactResult.name} · Compressed + encrypted</small></span></span> : message}</div>}
           </form><div className="security-note"><ShieldCheck size={16}/> Encrypted with AES-256-GCM <span>•</span> Verified for integrity</div>
+          <div className="artifact-icon-guide" aria-label="Craft artifact icon guide"><h3>Artifact icon guide</h3><div className="artifact-icon-list">{Object.values(CRAFT_ARTIFACT_ICONS).map((artifact)=><div className="artifact-icon-item" key={artifact.kind}><Image src={artifact.publicPath} alt={`${artifact.label} icon`} width={44} height={44}/><span><strong>{artifact.label}</strong><small>{artifact.extension ? `${artifact.extension} output` : 'No standalone output format yet'}</small></span></div>)}</div></div>
         </section>
         <aside className="right-column"><section className="panel strategy-panel"><div className="side-heading"><div><h2>Strategy performance</h2><p>Compression methods at work</p></div><span className="mini-badge">DEMO</span></div><div className="strategy-list">{[{name:'Brotli Q11',value:45,color:'blue'}, {name:'Zstd L22',value:32,color:'mint'}, {name:'Craft-Codec',value:18,color:'purple'}, {name:'Other strategies',value:5,color:'gold'}].map(item=><div className="strategy" key={item.name}><div><span><i className={item.color}/>{item.name}</span><strong>{item.value}%</strong></div><div className="track"><span className={item.color} style={{width:`${item.value}%`}}/></div></div>)}</div><div className="strategy-footer"><Sparkles size={15}/><span>Adaptive compression selects the best strategy for your data.</span></div></section>
           <section className="panel activity-panel" id="activity"><div className="side-heading"><div><h2>Integrity activity</h2><p>Recent sample checks</p></div><Fingerprint size={19} className="muted"/></div><div className="activity-row"><span className="check-icon"><Check size={14}/></span><div><strong>archive_2026_prod.craft</strong><small>Integrity verified</small></div><span className="activity-time">PASSED</span></div><div className="activity-row"><span className="check-icon"><Check size={14}/></span><div><strong>database_backup_v2.craft</strong><small>Integrity verified</small></div><span className="activity-time">PASSED</span></div><div className="activity-row"><span className="scan-icon"><Activity size={14}/></span><div><strong>assets_vault.craft</strong><small>Checking integrity</small></div><span className="activity-time scanning">SCANNING</span></div></section>

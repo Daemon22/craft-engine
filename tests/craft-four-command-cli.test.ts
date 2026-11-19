@@ -32,6 +32,7 @@ describe('four-command CLI compatibility router', () => {
     const packed = run(['nano', source]);
     expect(packed.status).toBe(0);
     expect(packed.stdout).toContain('compression only; not encrypted');
+    expect(packed.stdout).toContain('public/craft-icons/compressed-only.webp');
     const nanoPath = `${source}.nano`;
     expect(fs.readFileSync(nanoPath).subarray(0, 6).toString()).toBe('NANO02');
 
@@ -67,6 +68,7 @@ describe('four-command CLI compatibility router', () => {
 
     const encrypted = run(['craft', source, '-p', passphrase, '-o', archive]);
     expect(encrypted.status, encrypted.stderr).toBe(0);
+    expect(encrypted.stdout).toContain('/craft-icons/compressed-encrypted.webp');
     expect(fs.existsSync(`${archive}.fixity.json`)).toBe(true);
 
     const decrypted = run(['uncraft', archive, '-p', passphrase, '-o', restored]);

@@ -85,6 +85,18 @@ These are aliases for the former encrypted `nano` and `macro` commands. They use
 
 The supplied reference PDF is retained at [`docs/updates/craft-engine-update-reference.pdf`](docs/updates/craft-engine-update-reference.pdf). Its illustrative `CRAFT01` container is not used for production archives, because that format is explicitly documented as incompatible with the production repository's archive format.
 
+### Artifact icons
+
+The supplied artwork is preserved byte-for-byte in [`assets/craft-icons/source/`](assets/craft-icons/source/); optimized WebP derivatives are served from `public/craft-icons/`. The icon assignments are centralized in [`src/lib/craft/artifact-icons.ts`](src/lib/craft/artifact-icons.ts) and shown in the web workspace's artifact icon guide.
+
+| Supplied image | Meaning | Current artifact |
+| --- | --- | --- |
+| `Compressed_Only.png` | Compression, no encryption | Standalone `.nano` output; the CLI prints its icon asset path |
+| `Encrypted_Only.png` | Encryption, no compression | Reserved in the icon registry; the current engine has no encryption-only output mode |
+| `Compressed & Encrypted.png` | Compression followed by encryption | Production `.craft` output; used by the site icon and displayed after a successful web archive download |
+
+The production archive engine always compresses its payload before encrypting it. Keep the encryption-only image mapped for a future operation that truly emits such an artifact; do not use it to label current `.craft` archives.
+
 ### Library
 
 ```typescript

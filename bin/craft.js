@@ -81,6 +81,7 @@ function runNano(file, output, force) {
   const outPath = output || `${file}.nano`;
   safeWrite(outPath, Buffer.concat([header, compressed]), force);
   console.log(`nano: ${file} (${input.length} B) -> ${outPath} [compression only; not encrypted]`);
+  console.log(`nano: artifact icon ${path.resolve(__dirname, '../public/craft-icons/compressed-only.webp')}`);
 }
 
 function runMacro(file, output, force) {

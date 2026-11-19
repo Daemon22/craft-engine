@@ -21,6 +21,7 @@ import { compress7 } from '../compress7';
 import { checksum } from '../integrity';
 import { CRAFT_VERSION } from '../types';
 import { selfTest } from '../self-test';
+import { CRAFT_ARTIFACT_ICONS } from '../artifact-icons';
 import {
   computeFixityRecord,
   verifyFixityRecord,
@@ -503,6 +504,7 @@ async function cmdNano(filePath: string, opts: Record<string, string | boolean>)
   recordFixitySidecar(outPath, result.buffer, force);
   console.log('');
   success(`Crafted package saved: ${outPath}`);
+  info(`Artifact icon: ${CRAFT_ARTIFACT_ICONS.compressionAndEncryption.publicPath} (${CRAFT_ARTIFACT_ICONS.compressionAndEncryption.label})`);
   success(`Fixity record saved: ${fixitySidecarPath(outPath)} (for future 'craft verify' checks)`);
   info(`(nano() already self-verified this package decrypts correctly before saving it — see NanoOptions.verify)`);
 

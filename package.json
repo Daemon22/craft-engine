@@ -74,6 +74,7 @@
     "dist",
     "src",
     "craft-codec",
+    "public/craft-icons",
     "README.md",
     "LICENSE"
   ],

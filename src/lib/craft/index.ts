@@ -80,6 +80,10 @@ export {
 } from './codec';
 export type { EncryptResult, MetadataEncryptResult } from './codec';
 
+// Artifact icons — maps source images to the output processing state.
+export { CRAFT_ARTIFACT_ICONS, getCraftArtifactIcon } from './artifact-icons';
+export type { CraftArtifactKind } from './artifact-icons';
+
 // Integrity Layer
 export { checksum, verify } from './integrity';
 
