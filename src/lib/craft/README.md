@@ -34,7 +34,7 @@ map of how the pieces connect, not a wishlist.
                      └──────────────┬────────────────────────────┘
                                     │ .craft package (Buffer)
                      ┌──────────────▼────────────────────────────┐
-                     │         CLI: `craft nano <file>`            │
+                     │         CLI: `craft craft <file>`           │
                      │                                             │
                      │  safeWriteFile(): refuses to overwrite      │
                      │  an existing output without --force,        │
@@ -60,7 +60,7 @@ map of how the pieces connect, not a wishlist.
                               systemd/cron setup)      per environment
 ```
 
-Restoring a file (`macro()` / `craft macro`) runs the same
+Restoring a production archive (`macro()` / `craft uncraft`) runs the same
 decrypt→decompress→checksum-verify chain nano's self-check already
 exercised, plus the CLI's same `safeWriteFile` protection on the way
 back out to disk.
@@ -68,9 +68,17 @@ back out to disk.
 ## Quick start
 
 ```bash
-# One file
-craft nano secret.txt -p "your passphrase"        # → secret.txt.craft + secret.txt.craft.fixity.json
-craft macro secret.txt.craft -p "your passphrase"  # → secret.txt (restored, byte-identical)
+# Compression only (separate, unencrypted .nano package)
+craft nano secret.txt                               # → secret.txt.nano
+craft macro secret.txt.nano                         # → secret.txt (restored, byte-identical)
+
+# Production encryption (same archive format and engine as before)
+craft craft secret.txt -p "your passphrase"         # → secret.txt.craft + fixity sidecar
+craft uncraft secret.txt.craft -p "your passphrase" # → secret.txt (restored, byte-identical)
+
+# Former command names remain as compatibility aliases
+craft legacy-nano secret.txt -p "your passphrase"
+craft legacy-macro secret.txt.craft -p "your passphrase"
 
 # Check the whole environment works before trusting it with anything real
 craft doctor

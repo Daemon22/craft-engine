@@ -35,21 +35,41 @@ npm run build:lib
 
 ## Usage
 
-### CLI
+### CLI: compression and encryption are separate operations
+
+The four primary commands give compression and encryption distinct roles:
 
 ```bash
-# Verify the environment
-node bin/craft.js doctor
+# Compression only: creates my-data.tar.nano (not encrypted)
+node bin/craft.js nano my-data.tar
 
-# Compress a file (Nano)
-node bin/craft.js nano my-data.tar -p "your-secure-passphrase"
+# Reverse compression only: restores the original file
+node bin/craft.js macro my-data.tar.nano
 
-# Restore a file (Macro)
-node bin/craft.js macro my-data.tar.craft -p "your-secure-passphrase"
+# Encrypt using the production Craft archive format (with adaptive compression)
+node bin/craft.js craft my-data.tar -p "your-secure-passphrase"
+
+# Decrypt and restore an existing production Craft archive
+node bin/craft.js uncraft my-data.tar.craft -p "your-secure-passphrase"
 
 # Verify fixity/integrity
 node bin/craft.js verify my-vault/
 ```
+
+`nano`/`macro` handle standalone `.nano` compression packages only; they do not encrypt or decrypt. `craft`/`uncraft` route through the existing production `nano()`/`macro()` engine, preserving its archive format, adaptive compression, authenticated encryption, fixity records, and supported security features. Use `-o <path>` to select an output and `-f` to allow overwriting.
+
+### Existing command compatibility
+
+The original encrypted commands remain available without changing their behavior:
+
+```bash
+node bin/craft.js legacy-nano my-data.tar -p "your-secure-passphrase"
+node bin/craft.js legacy-macro my-data.tar.craft -p "your-secure-passphrase"
+```
+
+These are aliases for the former encrypted `nano` and `macro` commands. Existing production `.craft` archives remain handled by `craft`/`uncraft` and `legacy-macro`; the standalone `.nano` container is a separate compression-only format and is not a replacement for, or decryptor of, production `.craft` archives. All auxiliary production commands (`doctor`, `verify`, `watch`, passkeys, streaming, and others) remain available.
+
+The supplied reference PDF is retained at [`docs/updates/craft-engine-update-reference.pdf`](docs/updates/craft-engine-update-reference.pdf). Its illustrative `CRAFT01` container is not used for production archives, because that format is explicitly documented as incompatible with the production repository's archive format.
 
 ### Library
 
