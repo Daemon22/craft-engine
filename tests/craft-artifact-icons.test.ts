@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CRAFT_ARTIFACT_ICONS, getCraftArtifactIcon } from '../src/lib/craft/artifact-icons';
+import { CRAFT_ARTIFACT_ICONS, getCraftArtifactIcon, getCraftArtifactIconForFile } from '../src/lib/craft/artifact-icons';
 
 describe('artifact icon mapping', () => {
   it('preserves and resolves each user-supplied source filename', () => {
@@ -36,5 +36,23 @@ describe('artifact icon mapping', () => {
     expect(CRAFT_ARTIFACT_ICONS.encryptionOnly.supported).toBe(false);
     expect(getCraftArtifactIcon('compression-only')).toEqual(CRAFT_ARTIFACT_ICONS.compressionOnly);
     expect(getCraftArtifactIcon('compression-and-encryption')).toEqual(CRAFT_ARTIFACT_ICONS.compressionAndEncryption);
+  });
+
+  it('maps `.nano` files to the compression-only icon', () => {
+    expect(getCraftArtifactIconForFile('report.nano')).toEqual(CRAFT_ARTIFACT_ICONS.compressionOnly);
+    expect(getCraftArtifactIconForFile('/archive/quarterly-report.nano')?.publicPath).toBe(
+      '/craft-icons/compressed-only.webp',
+    );
+    expect(getCraftArtifactIconForFile('REPORT.NANO')?.kind).toBe('compression-only');
+  });
+
+  it('maps `.craft` files to the compression-and-encryption icon', () => {
+    expect(getCraftArtifactIconForFile('database-backup.craft')).toEqual(
+      CRAFT_ARTIFACT_ICONS.compressionAndEncryption,
+    );
+    expect(getCraftArtifactIconForFile('C:\\vault\\nightly.CRAFT')?.publicPath).toBe(
+      '/craft-icons/compressed-encrypted.webp',
+    );
+    expect(getCraftArtifactIconForFile('readme.txt')).toBeUndefined();
   });
 });

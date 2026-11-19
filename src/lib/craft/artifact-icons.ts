@@ -38,3 +38,14 @@ export type CraftArtifactKind = typeof CRAFT_ARTIFACT_ICONS[keyof typeof CRAFT_A
 export function getCraftArtifactIcon(kind: CraftArtifactKind) {
   return Object.values(CRAFT_ARTIFACT_ICONS).find((icon) => icon.kind === kind);
 }
+
+/** Resolve an icon from an output filename, matching extensions case-insensitively. */
+export function getCraftArtifactIconForFile(fileName: string) {
+  const leafName = fileName.split(/[\\/]/).pop() || '';
+  const extension = leafName.match(/\.[^.]+$/)?.[0].toLowerCase();
+  if (!extension) return undefined;
+
+  return Object.values(CRAFT_ARTIFACT_ICONS).find(
+    (icon) => icon.extension?.toLowerCase() === extension,
+  );
+}
