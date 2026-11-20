@@ -125,7 +125,7 @@ const craft = createCraftHttpAdapter({
 // Mount craft.options for OPTIONS preflight requests.
 ```
 
-The adapter expects multipart fields named `file` and `passphrase`; it returns `.craft` bytes with icon/metadata headers or restored file bytes. Host applications remain responsible for authentication, rate limiting, request-body limits, and allowed origins. The same operations can be invoked directly with `nano()` and `macro()` when an HTTP boundary is not needed. A focused import is also available as `@manya/craft-engine/lib/craft/http-adapter`.
+The adapter expects multipart fields named `file` and `passphrase`; it returns `.craft` bytes with icon/metadata headers or restored file bytes. Host applications remain responsible for authentication, rate limiting, request-body limits, and allowed origins. The same operations can be invoked directly with `nano()` and `macro()` when an HTTP boundary is not needed. A focused import is also available as `@manya/craft-engine/lib/craft/http-adapter`. See the [complete Express integration example](examples/http-adapter/express/README.md), with a bridge server, size limits, auth hooks, CORS notes, and curl requests.
 
 ## Development
 
