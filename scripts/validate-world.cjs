@@ -271,7 +271,7 @@ function writeReport(cliStatus, cliNote) {
     '## Summary', `**${rows.filter(r => r.split('\t')[2] === PASS).length} PASS** · ${rows.filter(r => r.split('\t')[2] === FAIL).length} FAIL · ${rows.filter(r => r.split('\t')[2] === 'REJECTED').length} rejected-by-design`, '',
     failures.length ? `### Failures\n${failures.map(f => '- ' + f).join('\n')}\n` : '### Failures\nnone\n',
     '> NOTE: JPEG/MP4 samples are synthetic streaming/compressed-data blobs (the engine is validated for lossless byte fidelity — its contract, not media decoding).',
-    '> The full Next.js app stack is not installed in this environment (slow registry); the engine lib + CLI + tests are fully built and self-verified.',
+    '> The standalone UI/auth stack is intentionally not part of this package; the engine library, CLI, HTTP adapter, and tests are self-verified.',
     '> Empty input is rejected by `nano()` by design (`Cannot craft empty data`); a 1-byte file round-trips correctly.',
   ].join('\n');
   fs.writeFileSync(reportPath, hdr);

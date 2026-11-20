@@ -7,8 +7,7 @@
  * ANY filename, including ones with quotes, backslashes, or non-ASCII
  * characters (accents, CJK, emoji, etc).
  *
- * Two bugs this fixes (both previously present in the nano/macro API
- * routes, which built this header via a raw template string):
+ * Two bugs this prevents in HTTP adapters that build download headers:
  *
  * 1. An unescaped `"` in the filename (e.g. `he said "hi".txt`) breaks
  *    out of the quoted-string early, producing a header most HTTP

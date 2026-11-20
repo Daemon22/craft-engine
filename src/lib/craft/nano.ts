@@ -5,7 +5,6 @@
  */
 
 import { compress, compress7Async, encryptWithKey, encryptMetadataWithKey, deriveKeyAsync } from './codec';
-import { macroWithKeys } from './macro';
 import { checksum } from './integrity';
 import { getFeatures, logAuditAction, CraftTier } from './features';
 import {
@@ -64,6 +63,7 @@ export async function nano(
     if (result.strategy === 12 && !features.allowEliteCodec) {
       // Fallback to next best strategy if elite is blocked
       const fallback = result.allResults.filter(r => r.strategy !== 12).sort((a,b) => a.size - b.size)[0];
+      void fallback;
       // In a real prod environment, we would re-run compression or select the fallback data
       console.warn("Elite codec (Strategy 12) is locked in FREE tier. Falling back.");
     }

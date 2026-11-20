@@ -133,8 +133,8 @@ export async function macro(
   }
 
   // Step 4: Verify integrity via SHA-256 checksum.
-  // Returns false rather than throwing so callers (e.g. web UI) can
-  // show a warning and still offer the data for download. Fatal errors
+  // Returns false rather than throwing so adapters and other callers can
+  // report an integrity warning while keeping the restored bytes available. Fatal errors
   // (wrong passphrase, corrupt header) are thrown earlier.
   const integrityVerified = verify(restored, metadata.originalChecksum);
 

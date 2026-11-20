@@ -12,7 +12,7 @@ This document outlines the roadmap for transitioning from an open-core engine to
 
 ### Entrepreneurs & Startups
 *   **The "Dev-First" SDK:** Provide the `easy.ts` facade as a primary selling point. 
-*   **Platform-as-a-Service (PaaS):** Offer the Next.js API routes as a managed service where you host the heavy PBKDF2 compute, selling "Craft Credits."
+*   **Application integration:** Embed the Node library directly or mount the framework-neutral `createCraftHttpAdapter` in a host application. Any hosted service, UI, authentication, or billing layer should live in a separate product repository rather than in the core engine package.
 *   **Custom Strategy Plugins:** Allow entrepreneurs to write their own `Pre-Processor` folds (Fold 8, Fold 9) for niche data types (e.g., specialized medical or financial data).
 
 ## 2. Monetization & Tiering (Temporal Capabilities)

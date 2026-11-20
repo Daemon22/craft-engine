@@ -1,6 +1,6 @@
 # Craft Engine (@manya/craft-engine)
 
-A high-integrity, adaptive encryption and compression suite for Node.js, designed for maximum-density archival with guaranteed fidelity.
+A high-integrity, adaptive encryption and compression suite for Node.js, designed for maximum-density archival with guaranteed fidelity. Craft Engine is delivered as a headless library, CLI, and framework-neutral HTTP adapter; this repository does not ship a standalone web UI or authentication service.
 
 ## Key Features
 
@@ -87,15 +87,15 @@ The supplied reference PDF is retained at [`docs/updates/craft-engine-update-ref
 
 ### Artifact icons
 
-The supplied artwork is preserved byte-for-byte in [`assets/craft-icons/source/`](assets/craft-icons/source/); optimized WebP derivatives are served from `public/craft-icons/`. The icon assignments are centralized in [`src/lib/craft/artifact-icons.ts`](src/lib/craft/artifact-icons.ts) and shown in the web workspace's artifact icon guide.
+The supplied artwork is preserved byte-for-byte in [`assets/craft-icons/source/`](assets/craft-icons/source/). Optimized WebP assets are included under `public/craft-icons/` for downstream apps to serve or copy into their own public assets. The mapping and filename resolver live in [`src/lib/craft/artifact-icons.ts`](src/lib/craft/artifact-icons.ts), so adapters and host apps can make the same association without depending on a Craft Engine UI.
 
 | Supplied image | Meaning | Current artifact |
 | --- | --- | --- |
-| `Compressed_Only.png` | Compression, no encryption | Standalone `.nano` output; the CLI prints its icon asset path |
-| `Encrypted_Only.png` | Encryption, no compression | Demo-only `.encdemo` fixture; the current engine has no encryption-only production output mode |
-| `Compressed & Encrypted.png` | Compression followed by encryption | Production `.craft` output; used by the site icon and displayed after a successful web archive download |
+| `Compressed_Only.png` | Compression, no encryption | Standalone `.nano` output |
+| `Encrypted_Only.png` | Encryption, no compression | Demo-only `.encdemo` fixture; no encryption-only production output mode |
+| `Compressed & Encrypted.png` | Compression followed by encryption | Production `.craft` output |
 
-The production archive engine always compresses its payload before encrypting it. The `.encdemo` example is a separate, clearly labeled envelope for icon verification only; `uncraft` does not read it. Do not use the encryption-only image to label current `.craft` archives. See [`examples/icon-verification/`](examples/icon-verification/) for generated samples and the demo passphrase.
+The production archive engine compresses its payload before encrypting it. The `.encdemo` example is a separate test envelope used only to verify the encryption-only icon; `uncraft` does not read it. Do not use that icon to label `.craft` archives. See [`examples/icon-verification/`](examples/icon-verification/) for reproducible samples and the demo-only passphrase.
 
 ### Library
 
@@ -109,11 +109,29 @@ const { buffer } = await nano(originalData, 'filename.txt', 'text/plain', 'passp
 const restored = await macro(buffer, 'passphrase');
 ```
 
+### Headless application adapter
+
+The `./lib/craft` export also provides standard Fetch API `Request`/`Response` handlers for host applications that want HTTP endpoints without embedding a Craft Engine UI or depending on Next.js:
+
+```typescript
+import { createCraftHttpAdapter } from '@manya/craft-engine/lib/craft';
+
+const craft = createCraftHttpAdapter({
+  maxFileSizeBytes: 100 * 1024 * 1024,
+  corsOrigin: 'https://your-app.example', // omit to leave CORS disabled
+});
+
+// Mount craft.create and craft.restore as POST handlers in your server/framework.
+// Mount craft.options for OPTIONS preflight requests.
+```
+
+The adapter expects multipart fields named `file` and `passphrase`; it returns `.craft` bytes with icon/metadata headers or restored file bytes. Host applications remain responsible for authentication, rate limiting, request-body limits, and allowed origins. The same operations can be invoked directly with `nano()` and `macro()` when an HTTP boundary is not needed. A focused import is also available as `@manya/craft-engine/lib/craft/http-adapter`.
+
 ## Development
 
 - `npm run test`: Run the Vitest suite.
-- `npm run build`: Build for production.
-- `npm run lint`: Run ESLint.
+- `npm run build`: Build the library, adapter, and CLI package.
+- `npm run lint`: Run framework-independent TypeScript ESLint checks.
 
 ## License
 

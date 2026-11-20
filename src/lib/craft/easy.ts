@@ -3,7 +3,7 @@ import * as path from 'path';
 import { nano } from './nano';
 import { nanoStream } from './nanoStream';
 import { macroStream } from './macroStream';
-import { NanoOptions, NanoResult } from './types';
+import { NanoOptions } from './types';
 import { CraftTier, getFeatures } from './features';
 
 /**

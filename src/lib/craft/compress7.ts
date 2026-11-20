@@ -770,24 +770,28 @@ export function decompress7(compressed: Buffer): Buffer {
     case 4: // BPE + Brotli → inverse: Brotli decode, then BPE decode
       return bpeDecode(data);
 
-    case 5: // Delta + MTF + Brotli → inverse: Brotli decode, then MTF decode, then delta decode
+    case 5: { // Delta + MTF + Brotli → inverse: Brotli decode, then MTF decode, then delta decode
       const mtfResult5 = mtfDecode(data);
       return deltaDecode(mtfResult5);
+    }
 
-    case 6: // Delta + RLE + Brotli → inverse: Brotli decode, then RLE decode, then delta decode
+    case 6: { // Delta + RLE + Brotli → inverse: Brotli decode, then RLE decode, then delta decode
       const rleResult6 = rleDecode(data);
       return deltaDecode(rleResult6);
+    }
 
     case 7: // Double-pass Brotli → inverse: decompress twice
       return brotliDecompressSync(data);
 
-    case 8: // MTF + RLE + Brotli → inverse: Brotli decode, then RLE decode, then MTF decode
+    case 8: { // MTF + RLE + Brotli → inverse: Brotli decode, then RLE decode, then MTF decode
       const rleResult8 = rleDecode(data);
       return mtfDecode(rleResult8);
+    }
 
-    case 9: // Delta + BPE + Brotli → inverse: Brotli decode, then BPE decode, then delta decode
+    case 9: { // Delta + BPE + Brotli → inverse: Brotli decode, then BPE decode, then delta decode
       const bpeResult9 = bpeDecode(data);
       return deltaDecode(bpeResult9);
+    }
 
     case 10: // Raw Zstd — no pre-processing was applied
       return data;
@@ -852,24 +856,28 @@ export async function decompress7Async(compressed: Buffer): Promise<Buffer> {
     case 4: // BPE + Brotli → inverse: Brotli decode, then BPE decode
       return offloadTransform('bpeDecode', bpeDecode, data);
 
-    case 5: // Delta + MTF + Brotli → inverse: Brotli decode, then MTF decode, then delta decode
+    case 5: { // Delta + MTF + Brotli → inverse: Brotli decode, then MTF decode, then delta decode
       const mtfResult5 = mtfDecode(data);
       return deltaDecode(mtfResult5);
+    }
 
-    case 6: // Delta + RLE + Brotli → inverse: Brotli decode, then RLE decode, then delta decode
+    case 6: { // Delta + RLE + Brotli → inverse: Brotli decode, then RLE decode, then delta decode
       const rleResult6 = await offloadTransform('rleDecode', rleDecode, data);
       return deltaDecode(rleResult6);
+    }
 
     case 7: // Double-pass Brotli → inverse: decompress twice
       return brotliDecompressAsync(data);
 
-    case 8: // MTF + RLE + Brotli → inverse: Brotli decode, then RLE decode, then MTF decode
+    case 8: { // MTF + RLE + Brotli → inverse: Brotli decode, then RLE decode, then MTF decode
       const rleResult8 = await offloadTransform('rleDecode', rleDecode, data);
       return mtfDecode(rleResult8);
+    }
 
-    case 9: // Delta + BPE + Brotli → inverse: Brotli decode, then BPE decode, then delta decode
+    case 9: { // Delta + BPE + Brotli → inverse: Brotli decode, then BPE decode, then delta decode
       const bpeResult9 = await offloadTransform('bpeDecode', bpeDecode, data);
       return deltaDecode(bpeResult9);
+    }
 
     case 10: // Raw Zstd — no pre-processing was applied
       return data;

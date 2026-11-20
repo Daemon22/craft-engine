@@ -1,47 +1,25 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": [
-      "dom",
-      "dom.iterable",
-      "esnext"
-    ],
+    "module": "ES2020",
+    "moduleResolution": "node",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "allowJs": true,
-    "skipLibCheck": true,
-    "strict": true,
     "noEmit": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
     "incremental": true,
     "paths": {
-      "@/*": [
-        "./src/*"
-      ]
-    },
-    "jsx": "react-jsx",
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ]
+      "@/*": ["./src/*"]
+    }
   },
   "include": [
-    "next-env.d.ts",
     "src/lib/**/*.ts",
-    "src/app/**/*.ts",
-    "src/app/**/*.tsx",
-    "scripts/**/*.cjs",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    "scripts/**/*.cjs"
   ],
   "exclude": [
     "node_modules",
     "dist",
     "craft-codec",
-    "tests",
-    "src/lib/db.ts"
+    "tests"
   ]
 }

@@ -1,4 +1,4 @@
-# Craft Engine — Architecture Audit
+# Craft Engine — Architecture Audit (historical snapshot)
 
 > **Scope:** documentation-only audit of the repository *as it exists* (commit on
 > disk at time of writing, 2026-08-06). No refactoring, no redesign proposals,
@@ -14,6 +14,13 @@
 > Node `>=22.15.0` required (uses `zlib.zstd*` for Zstd strategies).
 > Home in the `packages/craft-engine` directory of the `Daemon22/Manya`
 > monorepo (per `package.json#repository`).
+
+> **Current status update (2026-11-20):** This is a preserved audit of an older
+> repository snapshot, not a description of the current product. The standalone
+> Next.js UI, auth shell, and Next-specific route wrappers have been removed.
+> Current integrations are the CLI, Node library, and framework-neutral
+> Fetch `Request`/`Response` adapter in `src/lib/craft/http-adapter.ts`. See the
+> root `README.md` for current usage and adapter responsibilities.
 
 ---
 

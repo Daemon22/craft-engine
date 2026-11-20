@@ -13,8 +13,5 @@
     "sourceMap": true,
     "types": ["node"]
   },
-  "exclude": [
-    "node_modules",
-    "src/lib/db.ts"
-  ]
+  "exclude": ["node_modules"]
 }

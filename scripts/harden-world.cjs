@@ -335,7 +335,7 @@ function writeReport() {
     '## System & environment', `- Node: ${process.version}`, `- Platform: ${process.platform} ${process.arch}`,
     `- CPU note: on this Windows/Node build \`process.cpuUsage()\` returns microsecond-scale deltas (a 3.7s busy-loop reports ~3.4M ns-labeled units); cpu% is computed with the matching scale.`,
     '- This environment is slow and CPU-loaded (PBKDF2 600k-iteration KDF x2/x3 + the 7-fold codec are the bottleneck); timings are indicative rather than benchmark-grade.',
-    '- Full Next.js/React/Prisma/Sharp stack is NOT installed (slow registry in this sandbox); the engine lib/CLI/tests are fully built and self-verified.', '',
+    '- Standalone UI/auth stack is intentionally outside this package; the engine library, CLI, HTTP adapter, and tests are self-verified.', '',
     '## Phase results',
     '| # | Phase | Classification | Detail |', '|---|---|---|---|'];
   const map = {

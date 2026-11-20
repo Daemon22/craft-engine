@@ -488,13 +488,15 @@ export function decompress7(compressed: Buffer): Buffer {
     case 4: // BPE + Brotli
       return bpeDecode(data);
 
-    case 5: // Delta + MTF + Brotli
+    case 5: { // Delta + MTF + Brotli
       const mtfResult = mtfDecode(data);
       return deltaDecode(mtfResult);
+    }
 
-    case 6: // Delta + RLE + Brotli
+    case 6: { // Delta + RLE + Brotli
       const rleResult = rleDecode(data);
       return deltaDecode(rleResult);
+    }
 
     case 7: // Double-pass Brotli — decompress twice
       return brotliDecompressSync(data);

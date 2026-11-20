@@ -84,6 +84,10 @@ export type { EncryptResult, MetadataEncryptResult } from './codec';
 export { CRAFT_ARTIFACT_ICONS, getCraftArtifactIcon, getCraftArtifactIconForFile } from './artifact-icons';
 export type { CraftArtifactKind } from './artifact-icons';
 
+// Framework-neutral Web Request/Response handlers for application adapters.
+export { createCraftHttpAdapter } from './http-adapter';
+export type { CraftHttpAdapter, CraftHttpAdapterOptions } from './http-adapter';
+
 // Integrity Layer
 export { checksum, verify } from './integrity';
 
