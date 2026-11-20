@@ -33,6 +33,7 @@ describe('artifact icon mapping', () => {
     expect(CRAFT_ARTIFACT_ICONS.compressionOnly.extension).toBe('.nano');
     expect(CRAFT_ARTIFACT_ICONS.compressionAndEncryption.extension).toBe('.craft');
     expect(CRAFT_ARTIFACT_ICONS.encryptionOnly.extension).toBeNull();
+    expect(CRAFT_ARTIFACT_ICONS.encryptionOnly.demoExtension).toBe('.encdemo');
     expect(CRAFT_ARTIFACT_ICONS.encryptionOnly.supported).toBe(false);
     expect(getCraftArtifactIcon('compression-only')).toEqual(CRAFT_ARTIFACT_ICONS.compressionOnly);
     expect(getCraftArtifactIcon('compression-and-encryption')).toEqual(CRAFT_ARTIFACT_ICONS.compressionAndEncryption);
@@ -54,5 +55,11 @@ describe('artifact icon mapping', () => {
       '/craft-icons/compressed-encrypted.webp',
     );
     expect(getCraftArtifactIconForFile('readme.txt')).toBeUndefined();
+  });
+
+  it('maps only the demo `.encdemo` fixture to the encryption-only icon', () => {
+    const icon = getCraftArtifactIconForFile('encryption-only.encdemo');
+    expect(icon).toEqual(CRAFT_ARTIFACT_ICONS.encryptionOnly);
+    expect(icon?.supported).toBe(false);
   });
 });

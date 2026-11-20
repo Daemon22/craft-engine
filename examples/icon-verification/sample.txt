@@ -1,0 +1,26 @@
+Craft Engine artifact icon verification sample.
+This repeated line gives the compression-only and combined examples useful payloads.
+sample row 01: repeatable demo content for icon verification.
+sample row 02: repeatable demo content for icon verification.
+sample row 03: repeatable demo content for icon verification.
+sample row 04: repeatable demo content for icon verification.
+sample row 05: repeatable demo content for icon verification.
+sample row 06: repeatable demo content for icon verification.
+sample row 07: repeatable demo content for icon verification.
+sample row 08: repeatable demo content for icon verification.
+sample row 09: repeatable demo content for icon verification.
+sample row 10: repeatable demo content for icon verification.
+sample row 11: repeatable demo content for icon verification.
+sample row 12: repeatable demo content for icon verification.
+sample row 13: repeatable demo content for icon verification.
+sample row 14: repeatable demo content for icon verification.
+sample row 15: repeatable demo content for icon verification.
+sample row 16: repeatable demo content for icon verification.
+sample row 17: repeatable demo content for icon verification.
+sample row 18: repeatable demo content for icon verification.
+sample row 19: repeatable demo content for icon verification.
+sample row 20: repeatable demo content for icon verification.
+sample row 21: repeatable demo content for icon verification.
+sample row 22: repeatable demo content for icon verification.
+sample row 23: repeatable demo content for icon verification.
+sample row 24: repeatable demo content for icon verification.

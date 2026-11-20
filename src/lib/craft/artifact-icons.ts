@@ -20,6 +20,7 @@ export const CRAFT_ARTIFACT_ICONS = {
     sourceFilename: 'Encrypted_Only.png',
     publicPath: '/craft-icons/encrypted-only.webp',
     extension: null,
+    demoExtension: '.encdemo',
     label: 'Encryption only',
     supported: false,
   },
@@ -46,6 +47,7 @@ export function getCraftArtifactIconForFile(fileName: string) {
   if (!extension) return undefined;
 
   return Object.values(CRAFT_ARTIFACT_ICONS).find(
-    (icon) => icon.extension?.toLowerCase() === extension,
+    (icon) => icon.extension?.toLowerCase() === extension
+      || ('demoExtension' in icon && icon.demoExtension.toLowerCase() === extension),
   );
 }
