@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createCraftHttpAdapter, CRAFT_ARTIFACT_ICONS } from '../src/lib/craft';
 
 const PASSPHRASE = 'adapter-test-passphrase-2026';
@@ -53,5 +53,28 @@ describe('framework-neutral Craft HTTP adapter', () => {
     const response = await createCraftHttpAdapter().create(new Request('http://craft.test/adapter', { method: 'GET' }));
     expect(response.status).toBe(405);
     expect((await response.json()).error).toContain('POST');
+  });
+
+  it('does not log uploaded content or passphrases when restore fails', async () => {
+    const adapter = createCraftHttpAdapter();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const sensitivePayload = 'private archive bytes that must not appear in logs';
+    let logLines: string[] = [];
+    try {
+      const response = await adapter.restore(formRequest(
+        new File([sensitivePayload], 'broken.craft'),
+        'sensitive-passphrase-never-log-this',
+      ));
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      logLines = errorSpy.mock.calls.map(args => args.join(' '));
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    expect(logLines).toHaveLength(1);
+    const logLine = logLines.join(' ');
+    expect(logLine).toMatch(/\[Craft HTTP adapter: restore\] request [0-9a-f-]+ failed\./);
+    expect(logLine).not.toContain(sensitivePayload);
+    expect(logLine).not.toContain('sensitive-passphrase-never-log-this');
   });
 });

@@ -27,7 +27,7 @@ for (const relative of required) {
 const cjs = require(path.join(root, 'dist/cjs/lib/index.js'));
 const cjsCraft = require(path.join(root, 'dist/cjs/lib/craft/index.js'));
 const cjsAdapter = require(path.join(root, 'dist/cjs/lib/craft/http-adapter.js'));
-const publicCjsAdapter = require('@manya/craft-engine/lib/craft/http-adapter');
+const publicCjsAdapter = require('craft-engine/lib/craft/http-adapter');
 for (const [name, mod] of [['CJS root', cjs], ['CJS craft', cjsCraft]]) {
   for (const exportName of ['nano', 'macro', 'checksum']) {
     if (typeof mod[exportName] !== 'function') {
@@ -48,7 +48,7 @@ if (typeof cjsCraft.createCraftHttpAdapter !== 'function') {
   const esm = await import(pathToFileURL(path.join(root, 'dist/esm/lib/index.js')).href);
   const esmCraft = await import(pathToFileURL(path.join(root, 'dist/esm/lib/craft/index.js')).href);
   const esmAdapter = await import(pathToFileURL(path.join(root, 'dist/esm/lib/craft/http-adapter.js')).href);
-  const publicEsmAdapter = await import('@manya/craft-engine/lib/craft/http-adapter');
+  const publicEsmAdapter = await import('craft-engine/lib/craft/http-adapter');
   for (const [name, mod] of [['ESM root', esm], ['ESM craft', esmCraft]]) {
     for (const exportName of ['nano', 'macro', 'checksum']) {
       if (typeof mod[exportName] !== 'function') {

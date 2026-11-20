@@ -1,5 +1,5 @@
 /**
- * Tests for the `@manya/craft-engine/lib/craft` subpath export
+ * Tests for the `craft-engine/lib/craft` subpath export
  * (src/lib/craft/*) — a separate implementation from the main
  * `src/lib/index.ts` export covered by craft.test.ts.
  *

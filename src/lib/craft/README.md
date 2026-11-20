@@ -1,4 +1,4 @@
-# craft/ — the `./lib/craft` subpath (@manya/craft-engine/lib/craft)
+# craft/ — the `./lib/craft` subpath (craft-engine/lib/craft)
 
 This is a separate, sync-API implementation living alongside the
 package's primary export (`src/lib/index.ts` — see the top-level

@@ -1,6 +1,6 @@
 import express from 'express';
 import { Readable } from 'node:stream';
-import { createCraftHttpAdapter } from '@manya/craft-engine/lib/craft/http-adapter';
+import { createCraftHttpAdapter } from 'craft-engine/lib/craft/http-adapter';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);

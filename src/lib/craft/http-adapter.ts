@@ -144,7 +144,9 @@ export function createCraftHttpAdapter(options: CraftHttpAdapterOptions = {}): C
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : `An unknown error occurred while attempting to ${operationName}.`;
-      console.error(`[Craft HTTP adapter: ${operation}]`, error);
+      // Log only the correlation id and operation. Error objects can carry details about
+      // uploaded content or cryptographic state and should not be copied to server logs.
+      console.error(`[Craft HTTP adapter: ${operation}] request ${requestId} failed.`);
       if (operation === 'restore' && message.includes('INTEGRITY FAILURE')) {
         return makeJson({ error: 'Integrity verification failed. The restored data does not match the original; the archive may be corrupted.' }, 422, requestId, startTime);
       }

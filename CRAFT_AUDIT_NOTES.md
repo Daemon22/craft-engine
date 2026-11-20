@@ -1,6 +1,6 @@
 # CRAFT Engine Audit Notes & Hardening History
 
-This document tracks the evolution of security measures and architectural decisions for the `@manya/craft-engine`.
+This document tracks the evolution of security measures and architectural decisions for the `craft-engine`.
 
 ## The Hardening Pillars
 

@@ -9,7 +9,7 @@
 > or behaviour not exercised by the current code), it is explicitly marked
 > **〔inferred〕**.
 >
-> **Package:** `@manya/craft-engine` v0.2.0 (MIT) — "full application (CLI +
+> **Package:** `craft-engine` v0.2.0 (MIT) — "full application (CLI +
 > lib/craft module + Next.js app)". Author: Uviwe Menyiwe (Azura Daemon).
 > Node `>=22.15.0` required (uses `zlib.zstd*` for Zstd strategies).
 > Home in the `packages/craft-engine` directory of the `Daemon22/Manya`

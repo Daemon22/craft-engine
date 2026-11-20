@@ -1,4 +1,4 @@
-# Craft Engine (@manya/craft-engine)
+# Craft Engine (craft-engine)
 
 A high-integrity, adaptive encryption and compression suite for Node.js, designed for maximum-density archival with guaranteed fidelity. Craft Engine is delivered as a headless library, CLI, and framework-neutral HTTP adapter; this repository does not ship a standalone web UI or authentication service.
 
@@ -14,10 +14,18 @@ A high-integrity, adaptive encryption and compression suite for Node.js, designe
 ## Project Structure
 
 - `src/lib/craft/`: The primary, hardened sync implementation (recommended for production).
-- `src/lib/`: Legacy async implementation (historical usage).
-- `craft-codec/`: A standalone Carryless Range Coder used as a specialized compression strategy.
-- `bin/`: CLI entry point (`craft` command).
-- `docs/`: Technical specifications for streaming and chunk formats.
+ - `src/lib/`: Legacy async implementation (historical usage).
+ - `craft-codec/`: A standalone Carryless Range Coder used as a specialized compression strategy.
+ - `bin/`: CLI entry point (`craft` command).
+ - `docs/`: Technical specifications for streaming and chunk formats.
+
+## Install from npm
+
+```bash
+npm install craft-engine
+```
+
+This installs the Craft Engine library and the `craft` CLI executable. Import the HTTP adapter from `craft-engine/lib/craft/http-adapter` when mounting framework-neutral create/restore routes.
 
 ## Installation & Setup
 
@@ -100,7 +108,7 @@ The production archive engine compresses its payload before encrypting it. The `
 ### Library
 
 ```typescript
-import { nano, macro } from '@manya/craft-engine/lib/craft';
+import { nano, macro } from 'craft-engine/lib/craft';
 
 // Crafting
 const { buffer } = await nano(originalData, 'filename.txt', 'text/plain', 'passphrase');
@@ -114,7 +122,7 @@ const restored = await macro(buffer, 'passphrase');
 The `./lib/craft` export also provides standard Fetch API `Request`/`Response` handlers for host applications that want HTTP endpoints without embedding a Craft Engine UI or depending on Next.js:
 
 ```typescript
-import { createCraftHttpAdapter } from '@manya/craft-engine/lib/craft';
+import { createCraftHttpAdapter } from 'craft-engine/lib/craft';
 
 const craft = createCraftHttpAdapter({
   maxFileSizeBytes: 100 * 1024 * 1024,
@@ -125,7 +133,7 @@ const craft = createCraftHttpAdapter({
 // Mount craft.options for OPTIONS preflight requests.
 ```
 
-The adapter expects multipart fields named `file` and `passphrase`; it returns `.craft` bytes with icon/metadata headers or restored file bytes. Host applications remain responsible for authentication, rate limiting, request-body limits, and allowed origins. The same operations can be invoked directly with `nano()` and `macro()` when an HTTP boundary is not needed. A focused import is also available as `@manya/craft-engine/lib/craft/http-adapter`. See the [complete Express integration example](examples/http-adapter/express/README.md), with a bridge server, size limits, auth hooks, CORS notes, and curl requests.
+The adapter expects multipart fields named `file` and `passphrase`; it returns `.craft` bytes with icon/metadata headers or restored file bytes. Host applications remain responsible for authentication, rate limiting, request-body limits, and allowed origins. The same operations can be invoked directly with `nano()` and `macro()` when an HTTP boundary is not needed. A focused import is also available as `craft-engine/lib/craft/http-adapter`. See the [complete Express integration example](examples/http-adapter/express/README.md), with a bridge server, size limits, auth hooks, CORS notes, and curl requests.
 
 ## Development
 

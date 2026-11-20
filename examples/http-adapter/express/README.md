@@ -1,13 +1,13 @@
 # Craft Engine HTTP adapter with Express
 
-This example mounts Craft Engine’s framework-neutral Fetch API adapter on an Express server. It uses the public `@manya/craft-engine/lib/craft/http-adapter` export and keeps the adapter’s multipart parser in control of the form data.
+This example mounts Craft Engine’s framework-neutral Fetch API adapter on an Express server. It uses the public `craft-engine/lib/craft/http-adapter` export and keeps the adapter’s multipart parser in control of the form data.
 
 ## Requirements and setup
 
 Use Node.js **22.15 or newer**, matching the Craft Engine package engine requirement, plus an installed Craft Engine package. If the package is available in your registry, install it with Express in the application directory:
 
 ```bash
-npm install express @manya/craft-engine
+npm install express craft-engine
 ```
 
 If it is not yet available from your registry, make the repository available through your monorepo’s workspace configuration or a local `file:` dependency; the import path in the example remains the same.
